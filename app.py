@@ -4,7 +4,7 @@ import random
 from typing import TypedDict, List
 from langgraph.graph import StateGraph, END
 
-# ---------------- STREAMLIT CONFIG ----------------
+# ---------------- STREAMLIT ----------------
 st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 st.title("🏦 Real-Time Financial Crime Intelligence Platform (Agentic)")
 
@@ -30,7 +30,6 @@ class State(TypedDict):
     rbi_flags: List[str]
     risk_score: float
     decision: str
-    route: List[str]
 
 # ---------------- AGENTS ----------------
 
@@ -73,17 +72,21 @@ def rbi_agent(state: State):
 
 
 def fusion_agent(state: State):
+    fraud = state.get("fraud_score", 0)
+    aml = state.get("aml_score", 0)
+    flags = state.get("rbi_flags", [])
+
     risk = (
-        state["fraud_score"] * 0.5 +
-        state["aml_score"] * 0.4 +
-        len(state["rbi_flags"]) * 0.1
+        fraud * 0.5 +
+        aml * 0.4 +
+        len(flags) * 0.1
     )
 
     return {"risk_score": risk}
 
 
 def decision_agent(state: State):
-    r = state["risk_score"]
+    r = state.get("risk_score", 0)
 
     if r < 0.3:
         decision = "APPROVE"
@@ -94,34 +97,30 @@ def decision_agent(state: State):
 
     return {"decision": decision}
 
+# ---------------- ROUTER (AGENTIC ENTRY POINT) ----------------
 
-# ---------------- 🧠 FUSION ROUTER (REAL AGENTIC LOGIC) ----------------
-
-def fusion_router(state: State):
+def router(state: State):
     t = state["transaction"]
 
     route = []
 
-    # dynamic decision making (NOT fixed pipeline)
     if t["amount"] > 50000 or t["velocity_7d"] > 30 or t["failed_txn_flag"] == 1:
         route.append("fraud")
 
     if t["amount"] < 3000 or t["merchant_risk"] > 0.6:
         route.append("aml")
 
-    # fallback (always ensure at least one path)
     if not route:
         route.append("fraud")
 
     return {"route": route}
-
 
 # ---------------- LANGGRAPH ----------------
 
 def build_graph():
     workflow = StateGraph(State)
 
-    workflow.add_node("router", fusion_router)
+    workflow.add_node("router", router)
     workflow.add_node("fraud", fraud_agent)
     workflow.add_node("aml", aml_agent)
     workflow.add_node("rbi", rbi_agent)
@@ -130,20 +129,20 @@ def build_graph():
 
     workflow.set_entry_point("router")
 
-    # CONDITIONAL ROUTING (AGENTIC BEHAVIOR)
+    # conditional routing
     workflow.add_conditional_edges(
         "router",
         lambda state: state["route"]
     )
 
-    workflow.add_edge("fraud", "fusion")
-    workflow.add_edge("aml", "fusion")
-    workflow.add_edge("fusion", "rbi")
-    workflow.add_edge("rbi", "decision")
+    # FIXED FLOW (no missing rbi_flags issue anymore)
+    workflow.add_edge("fraud", "rbi")
+    workflow.add_edge("aml", "rbi")
+    workflow.add_edge("rbi", "fusion")
+    workflow.add_edge("fusion", "decision")
     workflow.add_edge("decision", END)
 
     return workflow.compile()
-
 
 # ---------------- RUN SYSTEM ----------------
 
@@ -185,16 +184,13 @@ st.dataframe(final_df.sort_values("risk_score", ascending=False).head(20))
 st.subheader("📌 Decision Breakdown")
 st.bar_chart(final_df["decision"].value_counts())
 
-# ---------------- AGENTIC EXPLANATION PANEL ----------------
+# ---------------- EXPLANATION ----------------
+st.subheader("🧠 Agentic System Behavior")
 
-st.subheader("🧠 Agentic Behavior Insight")
-
-st.write("""
-This system is now **agent-driven**, not linear ML pipeline:
-
-✔ Fusion Router decides which agents to activate  
+st.info("""
+✔ Router decides which agents to activate  
 ✔ Fraud / AML agents run conditionally  
-✔ RBI agent triggers compliance checks  
-✔ Fusion agent combines intelligence  
-✔ Decision agent executes final action  
+✔ RBI compliance always executes  
+✔ Fusion agent aggregates risk  
+✔ Decision engine outputs final action  
 """)
