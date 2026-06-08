@@ -4,35 +4,38 @@ import numpy as np
 import time
 import random
 
-# ==============================
+# =========================
 # PAGE CONFIG
-# ==============================
+# =========================
 st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 
 st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
 
-# ==============================
+# =========================
 # SESSION STATE INIT
-# ==============================
+# =========================
 if "transactions" not in st.session_state:
     st.session_state.transactions = []
-
-if "override_log" not in st.session_state:
-    st.session_state.override_log = {}
 
 if "counter" not in st.session_state:
     st.session_state.counter = 0
 
+if "run_stream" not in st.session_state:
+    st.session_state.run_stream = False
 
-# ==============================
-# SYNTHETIC TRANSACTION STREAM
-# ==============================
+if "override_log" not in st.session_state:
+    st.session_state.override_log = {}
+
+
+# =========================
+# SYNTHETIC TRANSACTION GENERATOR
+# =========================
 def generate_transaction(i):
     amount = random.randint(100, 20000)
     velocity = random.randint(1, 50)
 
-    fraud_score = min(1, np.random.rand() + (amount / 20000))
-    aml_score = min(1, np.random.rand() + (velocity / 50))
+    fraud_score = min(1, np.random.rand() + amount / 20000)
+    aml_score = min(1, np.random.rand() + velocity / 50)
 
     return {
         "transaction_id": f"T{i}",
@@ -43,38 +46,29 @@ def generate_transaction(i):
     }
 
 
-# ==============================
+# =========================
 # AGENTS
-# ==============================
+# =========================
 def fraud_agent(txn):
     return txn["fraud_score"]
-
 
 def aml_agent(txn):
     return txn["aml_score"]
 
-
 def fusion_agent(txn):
-    # SAFE fusion (NO missing keys anymore)
-    risk = (
-        txn["fraud_score"] * 0.6 +
-        txn["aml_score"] * 0.4
-    )
-    return risk
-
+    return txn["fraud_score"] * 0.6 + txn["aml_score"] * 0.4
 
 def decision_agent(risk):
     if risk > 0.65:
         return "BLOCK"
     elif risk > 0.35:
         return "REVIEW"
-    else:
-        return "APPROVE"
+    return "APPROVE"
 
 
-# ==============================
-# PROCESS ONE TRANSACTION
-# ==============================
+# =========================
+# PROCESS TRANSACTION
+# =========================
 def process_transaction(txn):
     fraud = fraud_agent(txn)
     aml = aml_agent(txn)
@@ -91,86 +85,94 @@ def process_transaction(txn):
     return txn
 
 
-# ==============================
-# LIVE STREAM CONTROLS
-# ==============================
+# =========================
+# CONTROLS
+# =========================
 col1, col2 = st.columns(2)
 
-start = col1.button("▶ Start Live Stream")
-stop = col2.button("⛔ Stop")
+if col1.button("▶ START LIVE STREAM"):
+    st.session_state.run_stream = True
 
-placeholder = st.empty()
+if col2.button("⛔ STOP STREAM"):
+    st.session_state.run_stream = False
 
 
-# ==============================
-# STREAM LOOP (SAFE)
-# ==============================
-if start:
-    for i in range(st.session_state.counter, st.session_state.counter + 50):
+# =========================
+# STREAM GENERATION (SAFE)
+# =========================
+if st.session_state.run_stream:
 
-        if stop:
-            break
+    txn = generate_transaction(st.session_state.counter)
+    txn = process_transaction(txn)
 
-        txn = generate_transaction(i)
-        txn = process_transaction(txn)
+    st.session_state.transactions.append(txn)
+    st.session_state.counter += 1
 
-        st.session_state.transactions.append(txn)
-        st.session_state.counter += 1
+    time.sleep(0.4)
 
-        df = pd.DataFrame(st.session_state.transactions)
+    st.rerun()
 
-        # ==========================
-        # DASHBOARD METRICS
-        # ==========================
-        colA, colB, colC = st.columns(3)
 
-        colA.metric("TOTAL", len(df))
-        colB.metric("BLOCKED", len(df[df["decision"] == "BLOCK"]))
-        colC.metric("REVIEW", len(df[df["decision"] == "REVIEW"]))
+# =========================
+# DASHBOARD RENDER
+# =========================
+df = pd.DataFrame(st.session_state.transactions)
 
-        # ==========================
-        # LIVE TABLE
-        # ==========================
-        with placeholder.container():
+if len(df) > 0:
 
-            st.subheader("🚨 Live Transactions Stream")
+    # KPIs
+    colA, colB, colC = st.columns(3)
 
-            st.dataframe(df.tail(20), use_container_width=True)
+    colA.metric("TOTAL TRANSACTIONS", len(df))
+    colB.metric("BLOCKED", len(df[df["decision"] == "BLOCK"]))
+    colC.metric("REVIEW", len(df[df["decision"] == "REVIEW"]))
 
-            st.subheader("🧠 Agentic Alerts")
+    st.divider()
 
-            for idx, row in df.tail(10).iterrows():
+    # LIVE TABLE
+    st.subheader("📡 Live Transaction Feed")
 
-                txn_id = row["transaction_id"]
+    st.dataframe(df.tail(30), use_container_width=True)
 
-                if row["decision"] == "BLOCK":
-                    st.error(f"BLOCKED | {txn_id} | Risk={row['risk_score']}")
+    st.divider()
 
-                elif row["decision"] == "REVIEW":
-                    st.warning(f"REVIEW REQUIRED | {txn_id} | Risk={row['risk_score']}")
+    # ALERT PANEL
+    st.subheader("🚨 Agentic Alerts")
 
-                    # ==========================
-                    # HITL OVERRIDE (FIXED KEYS)
-                    # ==========================
-                    key1 = f"approve_{txn_id}_{idx}"
-                    key2 = f"block_{txn_id}_{idx}"
+    for i, row in df.tail(10).iterrows():
 
-                    colA, colB = st.columns(2)
+        tx_id = row["transaction_id"]
 
-                    with colA:
-                        if st.button("Approve", key=key1):
-                            st.session_state.override_log[txn_id] = "APPROVED"
+        if row["decision"] == "BLOCK":
+            st.error(f"BLOCKED | {tx_id} | Risk={row['risk_score']}")
 
-                    with colB:
-                        if st.button("Block", key=key2):
-                            st.session_state.override_log[txn_id] = "BLOCKED"
+        elif row["decision"] == "REVIEW":
+            st.warning(f"REVIEW REQUIRED | {tx_id} | Risk={row['risk_score']}")
 
-                else:
-                    st.success(f"APPROVED | {txn_id}")
+            # =========================
+            # HITL OVERRIDE (FIXED KEYS)
+            # =========================
+            key_approve = f"approve_{tx_id}_{i}"
+            key_block = f"block_{tx_id}_{i}"
 
-            st.subheader("📌 Override Log")
-            st.json(st.session_state.override_log)
+            col1, col2 = st.columns(2)
 
-        time.sleep(0.4)
+            with col1:
+                if st.button("✔ Approve", key=key_approve):
+                    st.session_state.override_log[tx_id] = "APPROVED"
 
-st.info("Click START to begin real-time agentic transaction stream.")
+            with col2:
+                if st.button("⛔ Block", key=key_block):
+                    st.session_state.override_log[tx_id] = "BLOCKED"
+
+        else:
+            st.success(f"APPROVED | {tx_id}")
+
+    st.divider()
+
+    # OVERRIDE LOG
+    st.subheader("📌 Human Override Log")
+    st.json(st.session_state.override_log)
+
+else:
+    st.info("Click START to begin real-time transaction streaming.")
