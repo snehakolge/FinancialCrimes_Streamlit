@@ -1,7 +1,8 @@
-streamlit
+streamlit==1.58.0
 pandas
 numpy
+plotly
 scikit-learn
 shap
 langgraph
-plotly
+langchain-core
