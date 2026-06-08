@@ -58,14 +58,23 @@ def generate_txn(i):
 def fraud_agent(state):
 
     score = 0
-    reasons = []
 
-    if state["amount"] > 12000:
+    reasons = state.get("reasons", [])
+
+    amount = state.get("amount", 0)
+
+    device_change = state.get("device_change", 0)
+
+    if amount > 12000:
+
         score += 0.4
+
         reasons.append("High Amount Spike")
 
-    if state["device_change"] == 1:
+    if device_change == 1:
+
         score += 0.2
+
         reasons.append("Device Change Detected")
 
     return {
@@ -80,10 +89,15 @@ def fraud_agent(state):
 def aml_agent(state):
 
     score = 0
+
     reasons = state.get("reasons", [])
 
-    if state["velocity"] > 8:
+    velocity = state.get("velocity", 0)
+
+    if velocity > 8:
+
         score += 0.4
+
         reasons.append("Velocity Breach")
 
     return {
@@ -98,10 +112,15 @@ def aml_agent(state):
 def behavior_agent(state):
 
     score = 0
+
     reasons = state.get("reasons", [])
 
-    if state["behavior_score"] > 0.7:
+    behavior_score = state.get("behavior_score", 0)
+
+    if behavior_score > 0.7:
+
         score += 0.3
+
         reasons.append("Behavioral Anomaly")
 
     return {
@@ -116,10 +135,15 @@ def behavior_agent(state):
 def geo_agent(state):
 
     score = 0
+
     reasons = state.get("reasons", [])
 
-    if state["geo_risk"] == 1:
+    geo_risk = state.get("geo_risk", 0)
+
+    if geo_risk == 1:
+
         score += 0.3
+
         reasons.append("High Risk Geography")
 
     return {
@@ -134,12 +158,15 @@ def geo_agent(state):
 def memory_agent(state):
 
     score = 0
+
     reasons = state.get("reasons", [])
 
     repeat_risk = random.choice([0,1])
 
     if repeat_risk == 1:
+
         score += 0.2
+
         reasons.append("Repeat Risk Customer")
 
     return {
@@ -162,17 +189,21 @@ def fusion_agent(state):
     )
 
     if risk >= 0.8:
+
         decision = "BLOCK"
 
     elif risk >= 0.5:
+
         decision = "REVIEW"
 
     else:
+
         decision = "APPROVE"
 
     return {
         "risk_score": round(risk,2),
-        "decision": decision
+        "decision": decision,
+        "reasons": state.get("reasons", [])
     }
 
 # =========================================================
@@ -182,19 +213,29 @@ def fusion_agent(state):
 workflow = StateGraph(dict)
 
 workflow.add_node("fraud", fraud_agent)
+
 workflow.add_node("aml", aml_agent)
+
 workflow.add_node("behavior", behavior_agent)
+
 workflow.add_node("geo", geo_agent)
+
 workflow.add_node("memory", memory_agent)
+
 workflow.add_node("fusion", fusion_agent)
 
 workflow.set_entry_point("fraud")
 
 workflow.add_edge("fraud", "aml")
+
 workflow.add_edge("aml", "behavior")
+
 workflow.add_edge("behavior", "geo")
+
 workflow.add_edge("geo", "memory")
+
 workflow.add_edge("memory", "fusion")
+
 workflow.add_edge("fusion", END)
 
 app = workflow.compile()
@@ -224,20 +265,18 @@ with col2:
 c1, c2, c3 = st.columns(3)
 
 c1.metric("TOTAL", st.session_state.stats["TOTAL"])
+
 c2.metric("BLOCK", st.session_state.stats["BLOCK"])
+
 c3.metric("REVIEW", st.session_state.stats["REVIEW"])
 
 st.markdown("---")
 
 # =========================================================
-# LIVE FEED PLACEHOLDER
+# LIVE FEED
 # =========================================================
 
 feed_placeholder = st.empty()
-
-# =========================================================
-# LIVE STREAM ENGINE
-# =========================================================
 
 if st.session_state.running:
 
@@ -253,9 +292,10 @@ if st.session_state.running:
 
     st.session_state.stats["TOTAL"] += 1
 
-    decision = txn["decision"]
+    decision = txn.get("decision","APPROVE")
 
     if decision not in st.session_state.stats:
+
         st.session_state.stats[decision] = 0
 
     st.session_state.stats[decision] += 1
@@ -266,13 +306,19 @@ if st.session_state.running:
 
         for idx, r in enumerate(st.session_state.feed[:12]):
 
-            if r["decision"] == "BLOCK":
+            decision = r.get("decision","APPROVE")
+
+            risk_score = r.get("risk_score",0)
+
+            reasons = r.get("reasons",[])
+
+            if decision == "BLOCK":
 
                 st.error(
                     f"""
-🚨 BLOCK | {r['txn_id']} | Risk={r['risk_score']}
+🚨 BLOCK | {r['txn_id']} | Risk={risk_score}
 
-Reasons: {' | '.join(r['reasons'])}
+Reasons: {' | '.join(reasons)}
 
 Amount: ₹{r['amount']}
 
@@ -280,13 +326,13 @@ Customer: {r['customer_id']}
 """
                 )
 
-            elif r["decision"] == "REVIEW":
+            elif decision == "REVIEW":
 
                 st.warning(
                     f"""
-⚠️ REVIEW | {r['txn_id']} | Risk={r['risk_score']}
+⚠️ REVIEW | {r['txn_id']} | Risk={risk_score}
 
-Reasons: {' | '.join(r['reasons'])}
+Reasons: {' | '.join(reasons)}
 
 Amount: ₹{r['amount']}
 
@@ -298,7 +344,7 @@ Customer: {r['customer_id']}
 
                 st.success(
                     f"""
-🟢 APPROVE | {r['txn_id']} | Risk={r['risk_score']}
+🟢 APPROVE | {r['txn_id']} | Risk={risk_score}
 
 Amount: ₹{r['amount']}
 
@@ -306,7 +352,6 @@ Customer: {r['customer_id']}
 """
                 )
 
-            # UNIQUE BUTTON KEY
             unique_key = f"{r['txn_id']}_{idx}_{random.randint(1,999999)}"
 
             st.button(
@@ -319,7 +364,7 @@ Customer: {r['customer_id']}
     st.rerun()
 
 # =========================================================
-# INVESTIGATOR LOG
+# INVESTIGATOR ACTIONS
 # =========================================================
 
 st.markdown("---")
