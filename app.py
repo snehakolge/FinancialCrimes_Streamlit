@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -180,12 +181,22 @@ def memory_agent(state):
 
 def fusion_agent(state):
 
+    fraud_score = state.get("fraud_score", 0)
+
+    aml_score = state.get("aml_score", 0)
+
+    behavior_score_agent = state.get("behavior_score_agent", 0)
+
+    geo_score = state.get("geo_score", 0)
+
+    memory_score = state.get("memory_score", 0)
+
     risk = (
-        state.get("fraud_score",0)
-        + state.get("aml_score",0)
-        + state.get("behavior_score_agent",0)
-        + state.get("geo_score",0)
-        + state.get("memory_score",0)
+        fraud_score
+        + aml_score
+        + behavior_score_agent
+        + geo_score
+        + memory_score
     )
 
     if risk >= 0.8:
@@ -292,7 +303,7 @@ if st.session_state.running:
 
     st.session_state.stats["TOTAL"] += 1
 
-    decision = txn.get("decision","APPROVE")
+    decision = txn.get("decision", "APPROVE")
 
     if decision not in st.session_state.stats:
 
@@ -306,23 +317,23 @@ if st.session_state.running:
 
         for idx, r in enumerate(st.session_state.feed[:12]):
 
-            decision = r.get("decision","APPROVE")
+            decision = r.get("decision", "APPROVE")
 
-            risk_score = r.get("risk_score",0)
+            risk_score = r.get("risk_score", 0)
 
-            reasons = r.get("reasons",[])
+            reasons = r.get("reasons", [])
 
             if decision == "BLOCK":
 
                 st.error(
                     f"""
-🚨 BLOCK | {r['txn_id']} | Risk={risk_score}
+🚨 BLOCK | {r.get('txn_id')} | Risk={risk_score}
 
 Reasons: {' | '.join(reasons)}
 
-Amount: ₹{r['amount']}
+Amount: ₹{r.get('amount')}
 
-Customer: {r['customer_id']}
+Customer: {r.get('customer_id')}
 """
                 )
 
@@ -330,13 +341,13 @@ Customer: {r['customer_id']}
 
                 st.warning(
                     f"""
-⚠️ REVIEW | {r['txn_id']} | Risk={risk_score}
+⚠️ REVIEW | {r.get('txn_id')} | Risk={risk_score}
 
 Reasons: {' | '.join(reasons)}
 
-Amount: ₹{r['amount']}
+Amount: ₹{r.get('amount')}
 
-Customer: {r['customer_id']}
+Customer: {r.get('customer_id')}
 """
                 )
 
@@ -344,18 +355,18 @@ Customer: {r['customer_id']}
 
                 st.success(
                     f"""
-🟢 APPROVE | {r['txn_id']} | Risk={risk_score}
+🟢 APPROVE | {r.get('txn_id')} | Risk={risk_score}
 
-Amount: ₹{r['amount']}
+Amount: ₹{r.get('amount')}
 
-Customer: {r['customer_id']}
+Customer: {r.get('customer_id')}
 """
                 )
 
-            unique_key = f"{r['txn_id']}_{idx}_{random.randint(1,999999)}"
+            unique_key = f"{r.get('txn_id')}_{idx}_{random.randint(1,9999999)}"
 
             st.button(
-                f"Take Action {r['txn_id']}",
+                f"Take Action {r.get('txn_id')}",
                 key=unique_key
             )
 
@@ -385,11 +396,13 @@ risk_df = pd.DataFrame(st.session_state.feed)
 
 if not risk_df.empty:
 
-    high_risk = risk_df[
-        risk_df["risk_score"] >= 0.8
-    ][["customer_id", "risk_score", "txn_id"]]
+    if "risk_score" in risk_df.columns:
 
-    st.dataframe(high_risk, width="stretch")
+        high_risk = risk_df[
+            risk_df["risk_score"] >= 0.8
+        ][["customer_id", "risk_score", "txn_id"]]
+
+        st.dataframe(high_risk, width="stretch")
 
 # =========================================================
 # DECISION ANALYTICS
@@ -419,7 +432,7 @@ st.bar_chart(
 )
 
 # =========================================================
-# STREAM STATUS
+# STATUS
 # =========================================================
 
 if st.session_state.running:
@@ -429,3 +442,4 @@ if st.session_state.running:
 else:
 
     st.info("⏹ Stream Stopped")
+```
