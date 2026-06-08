@@ -1,9 +1,8 @@
-```python
 import streamlit as st
 import pandas as pd
 import numpy as np
-import time
 import random
+import time
 
 from langgraph.graph import StateGraph, END
 
@@ -37,7 +36,7 @@ if "actions" not in st.session_state:
     st.session_state.actions = {}
 
 # =========================================================
-# GENERATE TRANSACTION
+# GENERATE LIVE TRANSACTION
 # =========================================================
 
 def generate_txn(i):
@@ -177,7 +176,7 @@ def fusion_agent(state):
     }
 
 # =========================================================
-# LANGGRAPH BUILD
+# BUILD LANGGRAPH
 # =========================================================
 
 workflow = StateGraph(dict)
@@ -191,11 +190,11 @@ workflow.add_node("fusion", fusion_agent)
 
 workflow.set_entry_point("fraud")
 
-workflow.add_edge("fraud","aml")
-workflow.add_edge("aml","behavior")
-workflow.add_edge("behavior","geo")
-workflow.add_edge("geo","memory")
-workflow.add_edge("memory","fusion")
+workflow.add_edge("fraud", "aml")
+workflow.add_edge("aml", "behavior")
+workflow.add_edge("behavior", "geo")
+workflow.add_edge("geo", "memory")
+workflow.add_edge("memory", "fusion")
 workflow.add_edge("fusion", END)
 
 app = workflow.compile()
@@ -219,7 +218,7 @@ with col2:
         st.session_state.running = False
 
 # =========================================================
-# DASHBOARD
+# METRICS
 # =========================================================
 
 c1, c2, c3 = st.columns(3)
@@ -230,46 +229,47 @@ c3.metric("REVIEW", st.session_state.stats["REVIEW"])
 
 st.markdown("---")
 
+# =========================================================
+# LIVE FEED PLACEHOLDER
+# =========================================================
+
 feed_placeholder = st.empty()
 
 # =========================================================
-# LIVE STREAM
+# LIVE STREAM ENGINE
 # =========================================================
 
 if st.session_state.running:
 
-    for i in range(50):
+    txn_index = len(st.session_state.feed)
 
-        if not st.session_state.running:
-            break
+    txn = generate_txn(txn_index)
 
-        txn = generate_txn(i)
+    result = app.invoke(txn)
 
-        result = app.invoke(txn)
+    txn.update(result)
 
-        txn.update(result)
+    st.session_state.feed.insert(0, txn)
 
-        st.session_state.feed.insert(0, txn)
+    st.session_state.stats["TOTAL"] += 1
 
-        st.session_state.stats["TOTAL"] += 1
+    decision = txn["decision"]
 
-        decision = txn["decision"]
+    if decision not in st.session_state.stats:
+        st.session_state.stats[decision] = 0
 
-        if decision not in st.session_state.stats:
-            st.session_state.stats[decision] = 0
+    st.session_state.stats[decision] += 1
 
-        st.session_state.stats[decision] += 1
+    with feed_placeholder.container():
 
-        with feed_placeholder.container():
+        st.subheader("🚨 Live Feed")
 
-            st.subheader("🚨 Live Feed")
+        for idx, r in enumerate(st.session_state.feed[:12]):
 
-            for idx, r in enumerate(st.session_state.feed[:12]):
+            if r["decision"] == "BLOCK":
 
-                if r["decision"] == "BLOCK":
-
-                    st.error(
-                        f"""
+                st.error(
+                    f"""
 🚨 BLOCK | {r['txn_id']} | Risk={r['risk_score']}
 
 Reasons: {' | '.join(r['reasons'])}
@@ -278,12 +278,12 @@ Amount: ₹{r['amount']}
 
 Customer: {r['customer_id']}
 """
-                    )
+                )
 
-                elif r["decision"] == "REVIEW":
+            elif r["decision"] == "REVIEW":
 
-                    st.warning(
-                        f"""
+                st.warning(
+                    f"""
 ⚠️ REVIEW | {r['txn_id']} | Risk={r['risk_score']}
 
 Reasons: {' | '.join(r['reasons'])}
@@ -292,34 +292,34 @@ Amount: ₹{r['amount']}
 
 Customer: {r['customer_id']}
 """
-                    )
+                )
 
-                else:
+            else:
 
-                    st.success(
-                        f"""
+                st.success(
+                    f"""
 🟢 APPROVE | {r['txn_id']} | Risk={r['risk_score']}
 
 Amount: ₹{r['amount']}
 
 Customer: {r['customer_id']}
 """
-                    )
-
-                # UNIQUE BUTTON KEYS
-                btn_key = f"{r['txn_id']}_{idx}_{time.time()}"
-
-                st.button(
-                    f"Take Action {r['txn_id']}",
-                    key=btn_key
                 )
 
-        time.sleep(1)
+            # UNIQUE BUTTON KEY
+            unique_key = f"{r['txn_id']}_{idx}_{random.randint(1,999999)}"
 
-        st.rerun()
+            st.button(
+                f"Take Action {r['txn_id']}",
+                key=unique_key
+            )
+
+    time.sleep(1)
+
+    st.rerun()
 
 # =========================================================
-# ACTION LOG
+# INVESTIGATOR LOG
 # =========================================================
 
 st.markdown("---")
@@ -329,7 +329,7 @@ st.subheader("📌 Investigator Actions")
 st.write(st.session_state.actions)
 
 # =========================================================
-# ANALYTICS
+# HIGH RISK CUSTOMERS
 # =========================================================
 
 st.markdown("---")
@@ -342,15 +342,45 @@ if not risk_df.empty:
 
     high_risk = risk_df[
         risk_df["risk_score"] >= 0.8
-    ][["customer_id","risk_score","txn_id"]]
+    ][["customer_id", "risk_score", "txn_id"]]
 
     st.dataframe(high_risk, width="stretch")
 
 # =========================================================
-# END
+# DECISION ANALYTICS
 # =========================================================
 
-if not st.session_state.running:
+st.markdown("---")
 
-    st.success("✅ Stream Stopped")
-```
+st.subheader("📈 Decision Analytics")
+
+analytics_df = pd.DataFrame([
+    {
+        "Decision": "BLOCK",
+        "Count": st.session_state.stats["BLOCK"]
+    },
+    {
+        "Decision": "REVIEW",
+        "Count": st.session_state.stats["REVIEW"]
+    },
+    {
+        "Decision": "APPROVE",
+        "Count": st.session_state.stats["APPROVE"]
+    }
+])
+
+st.bar_chart(
+    analytics_df.set_index("Decision")
+)
+
+# =========================================================
+# STREAM STATUS
+# =========================================================
+
+if st.session_state.running:
+
+    st.success("🟢 Live Agentic Stream Running")
+
+else:
+
+    st.info("⏹ Stream Stopped")
