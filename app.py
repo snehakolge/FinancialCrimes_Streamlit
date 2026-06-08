@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import time
 import random
+import time
 
 # =========================
 # PAGE CONFIG
@@ -12,7 +12,7 @@ st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
 
 # =========================
-# SESSION STATE INIT
+# SESSION STATE
 # =========================
 if "transactions" not in st.session_state:
     st.session_state.transactions = []
@@ -28,14 +28,26 @@ if "override_log" not in st.session_state:
 
 
 # =========================
-# SYNTHETIC TRANSACTION GENERATOR
+# REALISTIC TRANSACTION GENERATOR
 # =========================
 def generate_transaction(i):
     amount = random.randint(100, 20000)
     velocity = random.randint(1, 50)
 
-    fraud_score = min(1, np.random.rand() + amount / 20000)
-    aml_score = min(1, np.random.rand() + velocity / 50)
+    # Normalized signals
+    amount_score = amount / 20000
+    velocity_score = velocity / 50
+
+    # REALISTIC DISTRIBUTION (IMPORTANT FIX)
+    fraud_score = np.clip(
+        np.random.normal(0.3 + amount_score * 0.4, 0.12),
+        0, 1
+    )
+
+    aml_score = np.clip(
+        np.random.normal(0.25 + velocity_score * 0.35, 0.12),
+        0, 1
+    )
 
     return {
         "transaction_id": f"T{i}",
@@ -59,15 +71,16 @@ def fusion_agent(txn):
     return txn["fraud_score"] * 0.6 + txn["aml_score"] * 0.4
 
 def decision_agent(risk):
-    if risk > 0.65:
+    if risk > 0.70:
         return "BLOCK"
-    elif risk > 0.35:
+    elif risk > 0.40:
         return "REVIEW"
-    return "APPROVE"
+    else:
+        return "APPROVE"
 
 
 # =========================
-# PROCESS TRANSACTION
+# PROCESSOR
 # =========================
 def process_transaction(txn):
     fraud = fraud_agent(txn)
@@ -90,7 +103,7 @@ def process_transaction(txn):
 # =========================
 col1, col2 = st.columns(2)
 
-if col1.button("▶ START LIVE STREAM"):
+if col1.button("▶ START STREAM"):
     st.session_state.run_stream = True
 
 if col2.button("⛔ STOP STREAM"):
@@ -98,7 +111,7 @@ if col2.button("⛔ STOP STREAM"):
 
 
 # =========================
-# STREAM GENERATION (SAFE)
+# STREAM ENGINE (SAFE)
 # =========================
 if st.session_state.run_stream:
 
@@ -108,13 +121,12 @@ if st.session_state.run_stream:
     st.session_state.transactions.append(txn)
     st.session_state.counter += 1
 
-    time.sleep(0.4)
-
+    time.sleep(0.35)
     st.rerun()
 
 
 # =========================
-# DASHBOARD RENDER
+# DASHBOARD
 # =========================
 df = pd.DataFrame(st.session_state.transactions)
 
@@ -129,14 +141,13 @@ if len(df) > 0:
 
     st.divider()
 
-    # LIVE TABLE
+    # LIVE FEED
     st.subheader("📡 Live Transaction Feed")
-
-    st.dataframe(df.tail(30), use_container_width=True)
+    st.dataframe(df.tail(25), use_container_width=True)
 
     st.divider()
 
-    # ALERT PANEL
+    # ALERT ENGINE
     st.subheader("🚨 Agentic Alerts")
 
     for i, row in df.tail(10).iterrows():
@@ -149,20 +160,18 @@ if len(df) > 0:
         elif row["decision"] == "REVIEW":
             st.warning(f"REVIEW REQUIRED | {tx_id} | Risk={row['risk_score']}")
 
-            # =========================
-            # HITL OVERRIDE (FIXED KEYS)
-            # =========================
-            key_approve = f"approve_{tx_id}_{i}"
-            key_block = f"block_{tx_id}_{i}"
+            # UNIQUE KEYS (CRITICAL FIX)
+            key_a = f"approve_{tx_id}_{i}"
+            key_b = f"block_{tx_id}_{i}"
 
-            col1, col2 = st.columns(2)
+            c1, c2 = st.columns(2)
 
-            with col1:
-                if st.button("✔ Approve", key=key_approve):
+            with c1:
+                if st.button("✔ Approve", key=key_a):
                     st.session_state.override_log[tx_id] = "APPROVED"
 
-            with col2:
-                if st.button("⛔ Block", key=key_block):
+            with c2:
+                if st.button("⛔ Block", key=key_b):
                     st.session_state.override_log[tx_id] = "BLOCKED"
 
         else:
@@ -175,4 +184,4 @@ if len(df) > 0:
     st.json(st.session_state.override_log)
 
 else:
-    st.info("Click START to begin real-time transaction streaming.")
+    st.info("Click START to begin real-time SOC simulation.")
