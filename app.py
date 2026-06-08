@@ -1,140 +1,176 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import time
-from langgraph_engine import build_graph, generate_data
+import random
 
-# =====================================================
+# ==============================
 # PAGE CONFIG
-# =====================================================
+# ==============================
 st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 
 st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
 
-# =====================================================
-# SESSION STATE
-# =====================================================
-if "actions" not in st.session_state:
-    st.session_state.actions = {}
+# ==============================
+# SESSION STATE INIT
+# ==============================
+if "transactions" not in st.session_state:
+    st.session_state.transactions = []
 
-if "stream_index" not in st.session_state:
-    st.session_state.stream_index = 0
+if "override_log" not in st.session_state:
+    st.session_state.override_log = {}
 
-
-# =====================================================
-# INIT ENGINE
-# =====================================================
-app = build_graph()
-df = pd.DataFrame(generate_data(50))
+if "counter" not in st.session_state:
+    st.session_state.counter = 0
 
 
-# =====================================================
-# RUN AGENTS (Batch simulation but streamed UI)
-# =====================================================
-results = []
+# ==============================
+# SYNTHETIC TRANSACTION STREAM
+# ==============================
+def generate_transaction(i):
+    amount = random.randint(100, 20000)
+    velocity = random.randint(1, 50)
 
-for row in df.to_dict(orient="records"):
+    fraud_score = min(1, np.random.rand() + (amount / 20000))
+    aml_score = min(1, np.random.rand() + (velocity / 50))
 
-    output = app.invoke({
-        "transaction": row,
-        "fraud_score": 0,
-        "aml_score": 0,
-        "rbi_flags": [],
-        "risk_score": 0,
-        "decision": ""
+    return {
+        "transaction_id": f"T{i}",
+        "amount": amount,
+        "velocity": velocity,
+        "fraud_score": fraud_score,
+        "aml_score": aml_score
+    }
+
+
+# ==============================
+# AGENTS
+# ==============================
+def fraud_agent(txn):
+    return txn["fraud_score"]
+
+
+def aml_agent(txn):
+    return txn["aml_score"]
+
+
+def fusion_agent(txn):
+    # SAFE fusion (NO missing keys anymore)
+    risk = (
+        txn["fraud_score"] * 0.6 +
+        txn["aml_score"] * 0.4
+    )
+    return risk
+
+
+def decision_agent(risk):
+    if risk > 0.65:
+        return "BLOCK"
+    elif risk > 0.35:
+        return "REVIEW"
+    else:
+        return "APPROVE"
+
+
+# ==============================
+# PROCESS ONE TRANSACTION
+# ==============================
+def process_transaction(txn):
+    fraud = fraud_agent(txn)
+    aml = aml_agent(txn)
+    risk = fusion_agent(txn)
+    decision = decision_agent(risk)
+
+    txn.update({
+        "fraud_score": round(fraud, 2),
+        "aml_score": round(aml, 2),
+        "risk_score": round(risk, 2),
+        "decision": decision
     })
 
-    results.append({**row, **output})
-
-result_df = pd.DataFrame(results)
+    return txn
 
 
-# =====================================================
-# METRICS PANEL
-# =====================================================
-col1, col2, col3 = st.columns(3)
+# ==============================
+# LIVE STREAM CONTROLS
+# ==============================
+col1, col2 = st.columns(2)
 
-col1.metric("TOTAL TRANSACTIONS", len(result_df))
-col2.metric("BLOCKED", len(result_df[result_df["decision"] == "BLOCK"]))
-col3.metric("REVIEW", len(result_df[result_df["decision"] == "REVIEW"]))
+start = col1.button("▶ Start Live Stream")
+stop = col2.button("⛔ Stop")
 
-
-st.divider()
-st.subheader("📡 LIVE SOC STREAM (Real-Time Simulation)")
-
-
-# =====================================================
-# REAL LIVE STREAM ENGINE
-# =====================================================
 placeholder = st.empty()
 
-actions_log = st.session_state.actions
 
+# ==============================
+# STREAM LOOP (SAFE)
+# ==============================
+if start:
+    for i in range(st.session_state.counter, st.session_state.counter + 50):
 
-# simulate continuous streaming behavior
-for i in range(len(result_df)):
+        if stop:
+            break
 
-    row = result_df.iloc[i]
+        txn = generate_transaction(i)
+        txn = process_transaction(txn)
 
-    with placeholder.container():
+        st.session_state.transactions.append(txn)
+        st.session_state.counter += 1
 
-        st.markdown("### 🔴 Incoming Transaction Stream")
+        df = pd.DataFrame(st.session_state.transactions)
 
-        c1, c2, c3, c4 = st.columns(4)
+        # ==========================
+        # DASHBOARD METRICS
+        # ==========================
+        colA, colB, colC = st.columns(3)
 
-        c1.metric("Txn ID", row["transaction_id"])
-        c2.metric("Amount", row["amount"])
-        c3.metric("Risk Score", round(row["risk_score"], 2))
-        c4.metric("Decision", row["decision"])
+        colA.metric("TOTAL", len(df))
+        colB.metric("BLOCKED", len(df[df["decision"] == "BLOCK"]))
+        colC.metric("REVIEW", len(df[df["decision"] == "REVIEW"]))
 
-        st.write("---")
+        # ==========================
+        # LIVE TABLE
+        # ==========================
+        with placeholder.container():
 
-        tx_id = row["transaction_id"]
+            st.subheader("🚨 Live Transactions Stream")
 
-        colA, colB = st.columns(2)
+            st.dataframe(df.tail(20), use_container_width=True)
 
-        # ---------------- APPROVE ----------------
-        with colA:
-            approve_key = f"approve_{tx_id}_{i}"
+            st.subheader("🧠 Agentic Alerts")
 
-            if st.button("✔ Approve", key=approve_key):
-                st.session_state.actions[tx_id] = "APPROVED"
-                st.success(f"{tx_id} APPROVED by Analyst")
+            for idx, row in df.tail(10).iterrows():
 
-        # ---------------- BLOCK ----------------
-        with colB:
-            block_key = f"block_{tx_id}_{i}"
+                txn_id = row["transaction_id"]
 
-            if st.button("⛔ Block", key=block_key):
-                st.session_state.actions[tx_id] = "BLOCKED"
-                st.error(f"{tx_id} BLOCKED by Analyst")
+                if row["decision"] == "BLOCK":
+                    st.error(f"BLOCKED | {txn_id} | Risk={row['risk_score']}")
 
-        st.write("")
+                elif row["decision"] == "REVIEW":
+                    st.warning(f"REVIEW REQUIRED | {txn_id} | Risk={row['risk_score']}")
 
-        # show current override if exists
-        if tx_id in st.session_state.actions:
-            st.info(f"Override: {st.session_state.actions[tx_id]}")
+                    # ==========================
+                    # HITL OVERRIDE (FIXED KEYS)
+                    # ==========================
+                    key1 = f"approve_{txn_id}_{idx}"
+                    key2 = f"block_{txn_id}_{idx}"
 
-    time.sleep(0.6)
+                    colA, colB = st.columns(2)
 
+                    with colA:
+                        if st.button("Approve", key=key1):
+                            st.session_state.override_log[txn_id] = "APPROVED"
 
-# =====================================================
-# OVERRIDE LOG
-# =====================================================
-st.divider()
-st.subheader("🧠 Human Override Log")
+                    with colB:
+                        if st.button("Block", key=key2):
+                            st.session_state.override_log[txn_id] = "BLOCKED"
 
-if st.session_state.actions:
-    st.json(st.session_state.actions)
-else:
-    st.info("No overrides yet")
+                else:
+                    st.success(f"APPROVED | {txn_id}")
 
+            st.subheader("📌 Override Log")
+            st.json(st.session_state.override_log)
 
-# =====================================================
-# FINAL SUMMARY
-# =====================================================
-st.divider()
-st.subheader("📊 Decision Breakdown")
+        time.sleep(0.4)
 
-st.bar_chart(
-    result_df["decision"].value_counts()
-)
+st.info("Click START to begin real-time agentic transaction stream.")
