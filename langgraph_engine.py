@@ -1,6 +1,3 @@
-# your agents + graph
-from langgraph.graph import StateGraph, END
-from typing import TypedDict, List
 from typing import TypedDict, List
 from langgraph.graph import StateGraph, END
 
@@ -56,12 +53,13 @@ def rbi_agent(state: State):
 
 
 def fusion_agent(state: State):
-    risk = (
-        state["fraud_score"] * 0.5 +
-        state["aml_score"] * 0.4 +
-        len(state["rbi_flags"]) * 0.1
-    )
-    return {"risk_score": risk}
+    return {
+        "risk_score": (
+            state["fraud_score"] * 0.5 +
+            state["aml_score"] * 0.4 +
+            len(state["rbi_flags"]) * 0.1
+        )
+    }
 
 
 def decision_agent(state: State):
