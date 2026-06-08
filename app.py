@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import random
 import time
 
@@ -59,7 +58,7 @@ def fraud_agent(state):
 
     score = 0
 
-    reasons = state.get("reasons", [])
+    reasons = state.get("reasons", []).copy()
 
     amount = state.get("amount", 0)
 
@@ -78,6 +77,7 @@ def fraud_agent(state):
         reasons.append("Device Change Detected")
 
     return {
+        **state,
         "fraud_score": score,
         "reasons": reasons
     }
@@ -90,7 +90,7 @@ def aml_agent(state):
 
     score = 0
 
-    reasons = state.get("reasons", [])
+    reasons = state.get("reasons", []).copy()
 
     velocity = state.get("velocity", 0)
 
@@ -101,6 +101,7 @@ def aml_agent(state):
         reasons.append("Velocity Breach")
 
     return {
+        **state,
         "aml_score": score,
         "reasons": reasons
     }
@@ -113,7 +114,7 @@ def behavior_agent(state):
 
     score = 0
 
-    reasons = state.get("reasons", [])
+    reasons = state.get("reasons", []).copy()
 
     behavior_score = state.get("behavior_score", 0)
 
@@ -124,6 +125,7 @@ def behavior_agent(state):
         reasons.append("Behavioral Anomaly")
 
     return {
+        **state,
         "behavior_score_agent": score,
         "reasons": reasons
     }
@@ -136,7 +138,7 @@ def geo_agent(state):
 
     score = 0
 
-    reasons = state.get("reasons", [])
+    reasons = state.get("reasons", []).copy()
 
     geo_risk = state.get("geo_risk", 0)
 
@@ -147,6 +149,7 @@ def geo_agent(state):
         reasons.append("High Risk Geography")
 
     return {
+        **state,
         "geo_score": score,
         "reasons": reasons
     }
@@ -159,7 +162,7 @@ def memory_agent(state):
 
     score = 0
 
-    reasons = state.get("reasons", [])
+    reasons = state.get("reasons", []).copy()
 
     repeat_risk = random.choice([0,1])
 
@@ -170,6 +173,7 @@ def memory_agent(state):
         reasons.append("Repeat Risk Customer")
 
     return {
+        **state,
         "memory_score": score,
         "reasons": reasons
     }
@@ -211,9 +215,9 @@ def fusion_agent(state):
         decision = "APPROVE"
 
     return {
+        **state,
         "risk_score": round(risk,2),
-        "decision": decision,
-        "reasons": state.get("reasons", [])
+        "decision": decision
     }
 
 # =========================================================
@@ -322,13 +326,15 @@ if st.session_state.running:
 
             reasons = r.get("reasons", [])
 
+            reason_text = " | ".join(reasons)
+
             if decision == "BLOCK":
 
                 st.error(
                     f"""
 🚨 BLOCK | {r.get('txn_id')} | Risk={risk_score}
 
-Reasons: {' | '.join(reasons)}
+Reasons: {reason_text}
 
 Amount: ₹{r.get('amount')}
 
@@ -342,7 +348,7 @@ Customer: {r.get('customer_id')}
                     f"""
 ⚠️ REVIEW | {r.get('txn_id')} | Risk={risk_score}
 
-Reasons: {' | '.join(reasons)}
+Reasons: {reason_text}
 
 Amount: ₹{r.get('amount')}
 
@@ -355,6 +361,8 @@ Customer: {r.get('customer_id')}
                 st.success(
                     f"""
 🟢 APPROVE | {r.get('txn_id')} | Risk={risk_score}
+
+Reasons: {reason_text}
 
 Amount: ₹{r.get('amount')}
 
@@ -441,4 +449,3 @@ if st.session_state.running:
 else:
 
     st.info("⏹ Stream Stopped")
-```
