@@ -1,4 +1,5 @@
-
+from langgraph_engine import build_graph
+app = build_graph()
 import streamlit as st
 import pandas as pd
 import plotly.express as px
