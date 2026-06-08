@@ -1,187 +1,126 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import random
 import time
 
-# =========================
+# -----------------------------
 # PAGE CONFIG
-# =========================
+# -----------------------------
 st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 
-st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
+st.title("Real-Time Financial Crime SOC (Agentic + HITL)")
 
-# =========================
-# SESSION STATE
-# =========================
-if "transactions" not in st.session_state:
-    st.session_state.transactions = []
-
-if "counter" not in st.session_state:
-    st.session_state.counter = 0
-
-if "run_stream" not in st.session_state:
-    st.session_state.run_stream = False
-
+# -----------------------------
+# SESSION STATE INIT
+# -----------------------------
 if "override_log" not in st.session_state:
     st.session_state.override_log = {}
 
+if "stream_running" not in st.session_state:
+    st.session_state.stream_running = True
 
-# =========================
-# REALISTIC TRANSACTION GENERATOR
-# =========================
-def generate_transaction(i):
-    amount = random.randint(100, 20000)
-    velocity = random.randint(1, 50)
 
-    # Normalized signals
-    amount_score = amount / 20000
-    velocity_score = velocity / 50
+# -----------------------------
+# SYNTHETIC DATA GENERATOR
+# -----------------------------
+def generate_data(n=50):
+    np.random.seed(42)
+    df = pd.DataFrame({
+        "transaction_id": [f"T{i}" for i in range(n)],
+        "amount": np.random.randint(100, 20000, n),
+        "velocity_7d": np.random.randint(1, 50, n),
+        "amount_deviation": np.random.random(n),
+        "failed_txn_flag": np.random.randint(0, 2, n)
+    })
+    return df
 
-    # REALISTIC DISTRIBUTION (IMPORTANT FIX)
-    fraud_score = np.clip(
-        np.random.normal(0.3 + amount_score * 0.4, 0.12),
-        0, 1
+
+# -----------------------------
+# SIMPLE RISK ENGINE (AGENTIC SIMULATION)
+# -----------------------------
+def risk_engine(row):
+    risk = (
+        row["amount"] / 20000 * 0.4 +
+        row["velocity_7d"] / 50 * 0.3 +
+        row["amount_deviation"] * 0.2 +
+        row["failed_txn_flag"] * 0.1
     )
-
-    aml_score = np.clip(
-        np.random.normal(0.25 + velocity_score * 0.35, 0.12),
-        0, 1
-    )
-
-    return {
-        "transaction_id": f"T{i}",
-        "amount": amount,
-        "velocity": velocity,
-        "fraud_score": fraud_score,
-        "aml_score": aml_score
-    }
+    return float(min(1.0, risk))
 
 
-# =========================
-# AGENTS
-# =========================
-def fraud_agent(txn):
-    return txn["fraud_score"]
-
-def aml_agent(txn):
-    return txn["aml_score"]
-
-def fusion_agent(txn):
-    return txn["fraud_score"] * 0.6 + txn["aml_score"] * 0.4
-
-def decision_agent(risk):
-    if risk > 0.70:
+def decision(risk):
+    if risk >= 0.7:
         return "BLOCK"
-    elif risk > 0.40:
+    elif risk >= 0.4:
         return "REVIEW"
     else:
         return "APPROVE"
 
 
-# =========================
-# PROCESSOR
-# =========================
-def process_transaction(txn):
-    fraud = fraud_agent(txn)
-    aml = aml_agent(txn)
-    risk = fusion_agent(txn)
-    decision = decision_agent(risk)
+# -----------------------------
+# STREAMING PLACEHOLDERS
+# -----------------------------
+col1, col2, col3 = st.columns(3)
 
-    txn.update({
-        "fraud_score": round(fraud, 2),
-        "aml_score": round(aml, 2),
-        "risk_score": round(risk, 2),
-        "decision": decision
+total_box = col1.empty()
+block_box = col2.empty()
+review_box = col3.empty()
+
+feed_box = st.empty()
+override_box = st.empty()
+
+
+# -----------------------------
+# GENERATE DATA
+# -----------------------------
+df = generate_data(50)
+
+
+# -----------------------------
+# LIVE STREAM LOOP
+# -----------------------------
+results = []
+
+for i, row in df.iterrows():
+
+    risk = risk_engine(row)
+    dec = decision(risk)
+
+    results.append({
+        "transaction_id": row["transaction_id"],
+        "risk": round(risk, 2),
+        "decision": dec
     })
 
-    return txn
+    # update stats
+    temp_df = pd.DataFrame(results)
 
+    total = len(temp_df)
+    blocked = len(temp_df[temp_df["decision"] == "BLOCK"])
+    review = len(temp_df[temp_df["decision"] == "REVIEW"])
 
-# =========================
-# CONTROLS
-# =========================
-col1, col2 = st.columns(2)
-
-if col1.button("▶ START STREAM"):
-    st.session_state.run_stream = True
-
-if col2.button("⛔ STOP STREAM"):
-    st.session_state.run_stream = False
-
-
-# =========================
-# STREAM ENGINE (SAFE)
-# =========================
-if st.session_state.run_stream:
-
-    txn = generate_transaction(st.session_state.counter)
-    txn = process_transaction(txn)
-
-    st.session_state.transactions.append(txn)
-    st.session_state.counter += 1
-
-    time.sleep(0.35)
-    st.rerun()
-
-
-# =========================
-# DASHBOARD
-# =========================
-df = pd.DataFrame(st.session_state.transactions)
-
-if len(df) > 0:
-
-    # KPIs
-    colA, colB, colC = st.columns(3)
-
-    colA.metric("TOTAL TRANSACTIONS", len(df))
-    colB.metric("BLOCKED", len(df[df["decision"] == "BLOCK"]))
-    colC.metric("REVIEW", len(df[df["decision"] == "REVIEW"]))
-
-    st.divider()
+    total_box.metric("TOTAL", total)
+    block_box.metric("BLOCKED", blocked)
+    review_box.metric("REVIEW", review)
 
     # LIVE FEED
-    st.subheader("📡 Live Transaction Feed")
-    st.dataframe(df.tail(25), use_container_width=True)
+    feed_box.markdown("### 📡 Live Transaction Feed")
 
-    st.divider()
+    for r in results[-15:]:
+        color = "🔴" if r["decision"] == "BLOCK" else "🟡" if r["decision"] == "REVIEW" else "🟢"
+        feed_box.write(
+            f"{color} {r['transaction_id']} | "
+            f"{r['decision']} | Risk={r['risk']}"
+        )
 
-    # ALERT ENGINE
-    st.subheader("🚨 Agentic Alerts")
+    # OVERRIDE PANEL
+    override_box.markdown("### 🧠 Human Override Log")
+    override_box.json(st.session_state.override_log)
 
-    for i, row in df.tail(10).iterrows():
+    # small delay for live effect
+    time.sleep(0.2)
 
-        tx_id = row["transaction_id"]
-
-        if row["decision"] == "BLOCK":
-            st.error(f"BLOCKED | {tx_id} | Risk={row['risk_score']}")
-
-        elif row["decision"] == "REVIEW":
-            st.warning(f"REVIEW REQUIRED | {tx_id} | Risk={row['risk_score']}")
-
-            # UNIQUE KEYS (CRITICAL FIX)
-            key_a = f"approve_{tx_id}_{i}"
-            key_b = f"block_{tx_id}_{i}"
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                if st.button("✔ Approve", key=key_a):
-                    st.session_state.override_log[tx_id] = "APPROVED"
-
-            with c2:
-                if st.button("⛔ Block", key=key_b):
-                    st.session_state.override_log[tx_id] = "BLOCKED"
-
-        else:
-            st.success(f"APPROVED | {tx_id}")
-
-    st.divider()
-
-    # OVERRIDE LOG
-    st.subheader("📌 Human Override Log")
-    st.json(st.session_state.override_log)
-
-else:
-    st.info("Click START to begin real-time SOC simulation.")
+# -----------------------------
+# FINAL SUMMARY
+# -----------------------------
+st.success("Stream Completed (Prototype Mode)")
