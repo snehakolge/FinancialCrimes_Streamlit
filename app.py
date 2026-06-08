@@ -1,243 +1,220 @@
 import streamlit as st
 import pandas as pd
 import random
-import plotly.express as px
+import time
 
-from typing import TypedDict, List
-from langgraph.graph import StateGraph, END
-
-# =============================
+# ==============================
 # PAGE CONFIG
-# =============================
+# ==============================
 st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 
 st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
 
+# ==============================
+# SESSION STATE INIT
+# ==============================
+if "i" not in st.session_state:
+    st.session_state.i = 0
 
-# =============================
-# SYNTHETIC DATA GENERATION
-# =============================
-def generate_data(n=50):
-    data = []
-    for i in range(n):
-        data.append({
-            "transaction_id": f"T{i}",
-            "amount": random.randint(500, 120000),
-            "velocity_7d": random.randint(1, 50),
-            "failed_txn_flag": random.randint(0, 1),
-            "merchant_risk": round(random.random(), 2)
-        })
-    return pd.DataFrame(data)
+if "logs" not in st.session_state:
+    st.session_state.logs = []
 
+if "data" not in st.session_state:
+    st.session_state.data = []
 
-# =============================
-# AGENT STATE
-# =============================
-class State(TypedDict, total=False):
-    transaction: dict
-    fraud_score: float
-    aml_score: float
-    rbi_flags: List[str]
-    risk_score: float
-    decision: str
+if "human_actions" not in st.session_state:
+    st.session_state.human_actions = []
 
 
-# =============================
-# AGENTS (SAFE + ROBUST)
-# =============================
-def fraud_agent(state: State):
-    t = state["transaction"]
-    score = 0.0
+# ==============================
+# SYNTHETIC LIVE TRANSACTIONS
+# ==============================
+def generate_txn(i):
+    return {
+        "transaction_id": f"T{i}",
+        "amount": random.randint(500, 120000),
+        "velocity_7d": random.randint(1, 60),
+        "failed_txn_flag": random.randint(0, 1),
+        "merchant_risk": round(random.random(), 2),
+    }
 
-    if t.get("amount", 0) > 50000:
+
+# ==============================
+# AGENTS
+# ==============================
+def fraud_agent(t):
+    score = 0
+    if t["amount"] > 50000:
         score += 0.4
-    if t.get("velocity_7d", 0) > 30:
+    if t["velocity_7d"] > 30:
         score += 0.3
-    if t.get("failed_txn_flag", 0) == 1:
+    if t["failed_txn_flag"] == 1:
         score += 0.2
-
-    return {"fraud_score": min(score, 1.0)}
-
-
-def aml_agent(state: State):
-    t = state["transaction"]
-    score = 0.0
-
-    if t.get("amount", 0) < 3000:
-        score += 0.5
-    if t.get("merchant_risk", 0) > 0.6:
-        score += 0.3
-
-    return {"aml_score": min(score, 1.0)}
+    return min(score, 1.0)
 
 
-def rbi_agent(state: State):
-    t = state["transaction"]
+def aml_agent(t):
+    score = 0
+    if t["amount"] < 3000:
+        score += 0.4
+    if t["merchant_risk"] > 0.6:
+        score += 0.4
+    return min(score, 1.0)
+
+
+def rbi_agent(t):
     flags = []
-
-    if t.get("velocity_7d", 0) > 25:
+    if t["velocity_7d"] > 25:
         flags.append("EWS_VELOCITY_SPIKE")
-    if t.get("amount", 0) > 100000:
+    if t["amount"] > 100000:
         flags.append("HIGH_VALUE_ALERT")
-
-    return {"rbi_flags": flags}
-
-
-def fusion_agent(state: State):
-    fraud = state.get("fraud_score", 0)
-    aml = state.get("aml_score", 0)
-    flags = state.get("rbi_flags", [])
-
-    risk = fraud * 0.5 + aml * 0.4 + len(flags) * 0.1
-    return {"risk_score": risk}
+    return flags
 
 
-def decision_agent(state: State):
-    r = state.get("risk_score", 0)
+def fusion_agent(fraud, aml, flags):
+    return fraud * 0.5 + aml * 0.4 + len(flags) * 0.1
 
-    if r < 0.3:
-        d = "APPROVE"
-    elif r < 0.7:
-        d = "REVIEW"
+
+def decision_agent(risk):
+    if risk < 0.3:
+        return "APPROVE"
+    elif risk < 0.7:
+        return "REVIEW"
     else:
-        d = "BLOCK"
-
-    return {"decision": d}
+        return "BLOCK"
 
 
-# =============================
-# BUILD GRAPH (FIXED)
-# =============================
-def build_graph():
-    workflow = StateGraph(State)
+# ==============================
+# PROCESS PIPELINE (AGENTIC FLOW)
+# ==============================
+def process(txn):
+    fraud = fraud_agent(txn)
+    aml = aml_agent(txn)
+    flags = rbi_agent(txn)
 
-    workflow.add_node("fraud", fraud_agent)
-    workflow.add_node("aml", aml_agent)
-    workflow.add_node("rbi", rbi_agent)
-    workflow.add_node("fusion", fusion_agent)
-    workflow.add_node("decision", decision_agent)
+    risk = fusion_agent(fraud, aml, flags)
+    decision = decision_agent(risk)
 
-    workflow.set_entry_point("fraud")
-
-    workflow.add_edge("fraud", "aml")
-    workflow.add_edge("aml", "rbi")
-    workflow.add_edge("rbi", "fusion")
-    workflow.add_edge("fusion", "decision")
-    workflow.add_edge("decision", END)
-
-    return workflow.compile()
+    return {
+        **txn,
+        "fraud_score": fraud,
+        "aml_score": aml,
+        "rbi_flags": flags,
+        "risk_score": risk,
+        "decision": decision,
+    }
 
 
-app = build_graph()
-
-
-# =============================
-# SESSION STATE (HITL MEMORY)
-# =============================
-if "actions" not in st.session_state:
-    st.session_state.actions = {}
-
-
-# =============================
-# LOAD STREAM DATA
-# =============================
-df = generate_data(50)
-
-results = []
-
-# =============================
-# AGENTIC STREAM PROCESSING
-# =============================
-for _, row in df.iterrows():
-
-    output = app.invoke({
-        "transaction": row.to_dict(),
-        "rbi_flags": []   # IMPORTANT default safety
+# ==============================
+# HUMAN OVERRIDE
+# ==============================
+def human_override(txn_id, new_decision):
+    st.session_state.human_actions.append({
+        "txn": txn_id,
+        "override": new_decision
     })
 
-    row_dict = row.to_dict()
-    row_dict.update(output)
 
-    results.append(row_dict)
-
-result_df = pd.DataFrame(results)
-
-
-# =============================
-# KPIs
-# =============================
+# ==============================
+# UI CONTROL PANEL
+# ==============================
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Total Transactions", len(result_df))
-col2.metric("BLOCKED", len(result_df[result_df["decision"] == "BLOCK"]))
-col3.metric("REVIEW", len(result_df[result_df["decision"] == "REVIEW"]))
+start = col1.button("▶ Start Live Stream")
+stop = col2.button("⛔ Stop")
+reset = col3.button("🔄 Reset System")
 
+if reset:
+    st.session_state.i = 0
+    st.session_state.logs = []
+    st.session_state.data = []
+    st.session_state.human_actions = []
 
-# =============================
-# RISK DISTRIBUTION
-# =============================
-fig = px.histogram(result_df, x="risk_score", nbins=20, title="📊 Risk Distribution")
-st.plotly_chart(fig, use_container_width=True)
+# ==============================
+# STREAM CONTROL
+# ==============================
+placeholder = st.empty()
 
+running = start and not stop
 
-# =============================
-# LIVE ALERT STREAM (AUTO)
-# =============================
-st.subheader("🚨 Agentic Alerts (Auto Generated)")
+if running:
 
-for i, row in result_df.iterrows():
+    for _ in range(200):  # simulate stream limit
 
-    if row["decision"] == "BLOCK":
-        st.error(
-            f"🚨 AUTO BLOCK | {row['transaction_id']} | Risk={row['risk_score']:.2f}"
-        )
+        i = st.session_state.i
+        txn = generate_txn(i)
 
-        key1 = f"approve_{row['transaction_id']}_{i}"
-        key2 = f"reject_{row['transaction_id']}_{i}"
+        result = process(txn)
 
-        colA, colB = st.columns(2)
+        st.session_state.data.append(result)
 
-        with colA:
-            if st.button("👤 Override → Approve", key=key1):
-                st.session_state.actions[row["transaction_id"]] = "APPROVED_BY_HUMAN"
+        # ALERT LOGGING
+        if result["decision"] == "BLOCK":
+            st.session_state.logs.append(f"🚨 BLOCK {result['transaction_id']} | Risk={result['risk_score']:.2f}")
 
-        with colB:
-            if st.button("❌ Confirm Block", key=key2):
-                st.session_state.actions[row["transaction_id"]] = "BLOCK_CONFIRMED"
+        elif result["decision"] == "REVIEW":
+            st.session_state.logs.append(f"⚠️ REVIEW {result['transaction_id']} | Risk={result['risk_score']:.2f}")
 
+        st.session_state.i += 1
 
-    elif row["decision"] == "REVIEW":
-        st.warning(
-            f"⚠️ REVIEW REQUIRED | {row['transaction_id']} | Risk={row['risk_score']:.2f}"
-        )
+        # ==============================
+        # LIVE DASHBOARD
+        # ==============================
+        with placeholder.container():
 
-        key3 = f"review_{row['transaction_id']}_{i}"
+            df = pd.DataFrame(st.session_state.data)
 
-        if st.button("👤 Approve After Review", key=key3):
-            st.session_state.actions[row["transaction_id"]] = "REVIEW_APPROVED"
+            st.subheader("📊 Live SOC Dashboard")
 
+            c1, c2, c3, c4 = st.columns(4)
 
-    else:
-        st.success(f"✔ APPROVED | {row['transaction_id']}")
+            c1.metric("Processed", len(df))
+            c2.metric("Blocked", len(df[df["decision"] == "BLOCK"]))
+            c3.metric("Review", len(df[df["decision"] == "REVIEW"]))
+            c4.metric("Approved", len(df[df["decision"] == "APPROVE"]))
 
+            st.divider()
 
-# =============================
-# HUMAN OVERRIDE TABLE
-# =============================
-st.subheader("🧠 Human Override Log")
+            # ================= ALERTS =================
+            st.subheader("🚨 Auto Generated Alerts")
 
-if st.session_state.actions:
-    st.dataframe(pd.DataFrame([
-        {"transaction_id": k, "action": v}
-        for k, v in st.session_state.actions.items()
-    ]))
+            for alert in st.session_state.logs[-10:]:
+                st.write(alert)
+
+            # ================= RISK TREND =================
+            st.subheader("📈 Risk Trend")
+            st.line_chart(df["risk_score"])
+
+            # ================= TRANSACTION TABLE =================
+            st.subheader("📄 Latest Transactions")
+            st.dataframe(df.tail(10), use_container_width=True)
+
+            # ================= HITL SECTION =================
+            st.subheader("👤 Human-in-the-Loop Overrides")
+
+            for row in df.tail(5).to_dict("records"):
+
+                st.write(f"TXN {row['transaction_id']} | {row['decision']} | Risk {row['risk_score']:.2f}")
+
+                colA, colB = st.columns(2)
+
+                if colA.button(
+                    "Approve Override",
+                    key=f"approve_{row['transaction_id']}"
+                ):
+                    human_override(row["transaction_id"], "APPROVE")
+
+                if colB.button(
+                    "Block Override",
+                    key=f"block_{row['transaction_id']}"
+                ):
+                    human_override(row["transaction_id"], "BLOCK")
+
+            # ================= HUMAN ACTION LOG =================
+            st.subheader("🧠 Override Log")
+            st.write(st.session_state.human_actions[-10:])
+
+        time.sleep(1.0)
+
 else:
-    st.info("No human overrides yet.")
-
-
-# =============================
-# FINAL INSIGHT
-# =============================
-st.subheader("📌 Decision Breakdown")
-
-st.bar_chart(result_df["decision"].value_counts())
+    st.info("Click ▶ Start Live Stream to begin agentic transaction processing.")
