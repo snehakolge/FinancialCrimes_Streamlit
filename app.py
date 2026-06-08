@@ -29,7 +29,6 @@ if "stats" not in st.session_state:
         "FREEZE": 0
     }
 
-# FIX OLD SESSION STATES
 if "FREEZE" not in st.session_state.stats:
     st.session_state.stats["FREEZE"] = 0
 
@@ -49,7 +48,7 @@ if "actions" not in st.session_state:
     st.session_state.actions = {}
 
 # =========================================================
-# METRICS
+# TOP METRICS
 # =========================================================
 
 m1, m2, m3, m4 = st.columns(4)
@@ -93,8 +92,9 @@ def generate_transaction():
         "device_change": random.choice([0,1]),
         "geo_risk": random.choice([0,1]),
         "behavioral_anomaly": random.choice([0,1]),
-        "risk_score": 0,
-        "reasons": []
+        "risk_score": 0.0,
+        "reasons": [],
+        "decision": "APPROVE"
     }
 
     return txn
@@ -121,43 +121,48 @@ class FraudState(TypedDict):
 
 def amount_agent(state):
 
-    if state.get("amount",0) > 12000:
+    if state.get("amount", 0) > 12000:
         state["risk_score"] += 0.4
         state["reasons"].append("High Amount Spike")
 
     return state
 
+
 def velocity_agent(state):
 
-    if state.get("velocity",0) > 8:
+    if state.get("velocity", 0) > 8:
         state["risk_score"] += 0.3
         state["reasons"].append("Velocity Breach")
 
     return state
 
+
 def device_agent(state):
 
-    if state.get("device_change",0) == 1:
+    if state.get("device_change", 0) == 1:
         state["risk_score"] += 0.2
         state["reasons"].append("Device Change Detected")
 
     return state
 
+
 def geo_agent(state):
 
-    if state.get("geo_risk",0) == 1:
+    if state.get("geo_risk", 0) == 1:
         state["risk_score"] += 0.2
         state["reasons"].append("High Risk Geography")
 
     return state
 
+
 def behavior_agent(state):
 
-    if state.get("behavioral_anomaly",0) == 1:
+    if state.get("behavioral_anomaly", 0) == 1:
         state["risk_score"] += 0.2
         state["reasons"].append("Behavioral Anomaly")
 
     return state
+
 
 def memory_agent(state):
 
@@ -173,9 +178,6 @@ def memory_agent(state):
 
     return state
 
-# =========================================================
-# DECISION ENGINE
-# =========================================================
 
 def decision_agent(state):
 
@@ -198,7 +200,7 @@ def decision_agent(state):
     return state
 
 # =========================================================
-# LANGGRAPH BUILD
+# LANGGRAPH WORKFLOW
 # =========================================================
 
 workflow = StateGraph(FraudState)
@@ -224,7 +226,7 @@ workflow.add_edge("decision", END)
 app = workflow.compile()
 
 # =========================================================
-# BUTTONS
+# CONTROL BUTTONS
 # =========================================================
 
 c1, c2 = st.columns(2)
@@ -245,57 +247,89 @@ feed_placeholder = st.empty()
 
 if st.session_state.running:
 
+    st.subheader("🚨 Live Feed")
+
+    txn = generate_transaction()
+
+    result = app.invoke(txn)
+
+    decision = result["decision"]
+
+    # SAFE COUNTER UPDATE
+    if decision not in st.session_state.stats:
+        st.session_state.stats[decision] = 0
+
+    st.session_state.stats[decision] += 1
+
+    # STORE ALERT
+    st.session_state.alerts.insert(0, result)
+
+    # KEEP ONLY LAST 100 ALERTS
+    st.session_state.alerts = st.session_state.alerts[:100]
+
+    # UPDATE METRICS
+    m1.metric(
+        "TOTAL",
+        sum(st.session_state.stats.values())
+    )
+
+    m2.metric(
+        "BLOCK",
+        st.session_state.stats["BLOCK"]
+    )
+
+    m3.metric(
+        "REVIEW",
+        st.session_state.stats["REVIEW"]
+    )
+
+    m4.metric(
+        "FREEZE",
+        st.session_state.stats["FREEZE"]
+    )
+
+    # DISPLAY FEED
     with feed_placeholder.container():
 
-        st.subheader("🚨 Live Feed")
+        for idx, r in enumerate(st.session_state.alerts[:15]):
 
-        for i in range(50):
-
-            if not st.session_state.running:
-                break
-
-            txn = generate_transaction()
-
-            result = app.invoke(txn)
-
-            decision = result["decision"]
-
-            st.session_state.stats[decision] += 1
-
-            st.session_state.alerts.insert(0, result)
+            decision = r["decision"]
 
             emoji = {
-                "APPROVE":"🟢",
-                "REVIEW":"⚠️",
-                "BLOCK":"🚨",
-                "FREEZE":"🧊"
+                "APPROVE": "🟢",
+                "REVIEW": "⚠️",
+                "BLOCK": "🚨",
+                "FREEZE": "🧊"
             }
 
             st.markdown(
                 f"""
-### {emoji[decision]} {decision} | {result['txn_id']} | Risk={round(result['risk_score'],2)}
+### {emoji[decision]} {decision} | {r['txn_id']} | Risk={round(r['risk_score'],2)}
 
-**Reasons:** {' | '.join(result['reasons'])}
+Reasons: {' | '.join(r['reasons'])}
 
-**Amount:** ₹{result['amount']}
+Amount: ₹{r['amount']}
 
-**Customer:** {result['customer_id']}
+Customer: {r['customer_id']}
                 """
             )
 
-            if decision in ["REVIEW","BLOCK","FREEZE"]:
+            # UNIQUE BUTTON KEY
+            action_key = f"{r['txn_id']}_{idx}_{decision}"
 
-                key = f"{result['txn_id']}_{i}_{decision}"
+            if decision in ["BLOCK", "FREEZE", "REVIEW"]:
 
                 if st.button(
-                    f"Take Action {result['txn_id']}",
-                    key=key
+                    f"Investigate {r['txn_id']}",
+                    key=action_key
                 ):
-                    st.session_state.actions[result["txn_id"]] = "Investigated"
+                    st.session_state.actions[r["txn_id"]] = "Investigated"
 
-            time.sleep(0.5)
+    # STREAM SPEED
+    time.sleep(1)
 
-        st.success("✅ Live Agentic Stream Completed")
+    # AUTO REFRESH
+    st.rerun()
 
 # =========================================================
 # INVESTIGATOR ACTIONS
@@ -313,16 +347,17 @@ st.subheader("📊 High Risk Customers")
 
 risk_df = pd.DataFrame(
     list(st.session_state.customer_risk.items()),
-    columns=["Customer","Risk Count"]
+    columns=["Customer", "Risk Count"]
 )
 
 if not risk_df.empty:
-    st.dataframe(
-        risk_df.sort_values(
-            by="Risk Count",
-            ascending=False
-        ).head(10)
+
+    risk_df = risk_df.sort_values(
+        by="Risk Count",
+        ascending=False
     )
+
+    st.dataframe(risk_df.head(10))
 
 # =========================================================
 # DECISION ANALYTICS
