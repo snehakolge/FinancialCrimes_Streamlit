@@ -1,9 +1,9 @@
+```python
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import random
 import time
+import random
 
 from langgraph.graph import StateGraph, END
 
@@ -11,10 +11,7 @@ from langgraph.graph import StateGraph, END
 # PAGE CONFIG
 # =========================================================
 
-st.set_page_config(
-    page_title="Financial Crime SOC",
-    layout="wide"
-)
+st.set_page_config(layout="wide")
 
 st.title("🏦 Real-Time Financial Crime SOC (Agentic + LangGraph + HITL)")
 
@@ -22,72 +19,38 @@ st.title("🏦 Real-Time Financial Crime SOC (Agentic + LangGraph + HITL)")
 # SESSION STATE
 # =========================================================
 
-if "results" not in st.session_state:
-    st.session_state.results = []
+if "running" not in st.session_state:
+    st.session_state.running = False
 
-if "alerts" not in st.session_state:
-    st.session_state.alerts = []
+if "feed" not in st.session_state:
+    st.session_state.feed = []
 
 if "stats" not in st.session_state:
     st.session_state.stats = {
-        "APPROVE": 0,
+        "TOTAL": 0,
+        "BLOCK": 0,
         "REVIEW": 0,
-        "BLOCK": 0
+        "APPROVE": 0
     }
 
-if "customer_memory" not in st.session_state:
-    st.session_state.customer_memory = {}
-
-if "investigator_actions" not in st.session_state:
-    st.session_state.investigator_actions = {}
+if "actions" not in st.session_state:
+    st.session_state.actions = {}
 
 # =========================================================
-# DATA GENERATOR
+# GENERATE TRANSACTION
 # =========================================================
 
-def generate_transaction(i):
+def generate_txn(i):
 
     return {
         "txn_id": f"T{i}",
         "customer_id": f"C{random.randint(100,120)}",
         "amount": random.randint(100, 20000),
-        "velocity": random.randint(1, 12),
-        "country_risk": random.choice([0, 1]),
-        "device_change": random.choice([0, 1])
+        "velocity": random.randint(1, 15),
+        "device_change": random.choice([0,1]),
+        "geo_risk": random.choice([0,1]),
+        "behavior_score": round(random.uniform(0,1),2)
     }
-
-# =========================================================
-# SAMPLE DATAFRAME
-# =========================================================
-
-df = pd.DataFrame([
-    generate_transaction(i)
-    for i in range(50)
-])
-
-# =========================================================
-# CUSTOMER MEMORY
-# =========================================================
-
-def update_customer_memory(txn, decision):
-
-    cid = txn["customer_id"]
-
-    if cid not in st.session_state.customer_memory:
-
-        st.session_state.customer_memory[cid] = {
-            "txn_count": 0,
-            "blocked_count": 0,
-            "total_amount": 0
-        }
-
-    st.session_state.customer_memory[cid]["txn_count"] += 1
-
-    st.session_state.customer_memory[cid]["total_amount"] += txn["amount"]
-
-    if decision == "BLOCK":
-
-        st.session_state.customer_memory[cid]["blocked_count"] += 1
 
 # =========================================================
 # FRAUD AGENT
@@ -95,22 +58,19 @@ def update_customer_memory(txn, decision):
 
 def fraud_agent(state):
 
-    risk = 0
+    score = 0
     reasons = []
 
-    if state["amount"] > 15000:
-
-        risk += 0.4
+    if state["amount"] > 12000:
+        score += 0.4
         reasons.append("High Amount Spike")
 
     if state["device_change"] == 1:
-
-        risk += 0.2
+        score += 0.2
         reasons.append("Device Change Detected")
 
     return {
-        **state,
-        "fraud_score": risk,
+        "fraud_score": score,
         "reasons": reasons
     }
 
@@ -120,360 +80,277 @@ def fraud_agent(state):
 
 def aml_agent(state):
 
-    risk = 0
-
+    score = 0
     reasons = state.get("reasons", [])
 
     if state["velocity"] > 8:
-
-        risk += 0.4
+        score += 0.4
         reasons.append("Velocity Breach")
 
-    if state["country_risk"] == 1:
+    return {
+        "aml_score": score,
+        "reasons": reasons
+    }
 
-        risk += 0.2
+# =========================================================
+# BEHAVIOR AGENT
+# =========================================================
+
+def behavior_agent(state):
+
+    score = 0
+    reasons = state.get("reasons", [])
+
+    if state["behavior_score"] > 0.7:
+        score += 0.3
+        reasons.append("Behavioral Anomaly")
+
+    return {
+        "behavior_score_agent": score,
+        "reasons": reasons
+    }
+
+# =========================================================
+# GEO AGENT
+# =========================================================
+
+def geo_agent(state):
+
+    score = 0
+    reasons = state.get("reasons", [])
+
+    if state["geo_risk"] == 1:
+        score += 0.3
         reasons.append("High Risk Geography")
 
     return {
-        **state,
-        "aml_score": risk,
+        "geo_score": score,
         "reasons": reasons
     }
 
 # =========================================================
-# BEHAVIORAL AGENT
+# MEMORY AGENT
 # =========================================================
 
-def behavioral_agent(state):
+def memory_agent(state):
 
-    cid = state["customer_id"]
-
-    risk = 0
-
+    score = 0
     reasons = state.get("reasons", [])
 
-    memory = st.session_state.customer_memory
+    repeat_risk = random.choice([0,1])
 
-    if cid in memory:
-
-        avg_amount = (
-            memory[cid]["total_amount"] /
-            max(memory[cid]["txn_count"], 1)
-        )
-
-        if state["amount"] > avg_amount * 3:
-
-            risk += 0.3
-            reasons.append("Behavioral Anomaly")
-
-        if memory[cid]["blocked_count"] >= 2:
-
-            risk += 0.3
-            reasons.append("Repeat Risk Customer")
+    if repeat_risk == 1:
+        score += 0.2
+        reasons.append("Repeat Risk Customer")
 
     return {
-        **state,
-        "behavior_score": risk,
+        "memory_score": score,
         "reasons": reasons
     }
 
 # =========================================================
-# DECISION AGENT
+# FUSION AGENT
 # =========================================================
 
-def decision_agent(state):
+def fusion_agent(state):
 
-    total_risk = (
-        state.get("fraud_score", 0)
-        + state.get("aml_score", 0)
-        + state.get("behavior_score", 0)
+    risk = (
+        state.get("fraud_score",0)
+        + state.get("aml_score",0)
+        + state.get("behavior_score_agent",0)
+        + state.get("geo_score",0)
+        + state.get("memory_score",0)
     )
 
-    if total_risk >= 0.8:
-
+    if risk >= 0.8:
         decision = "BLOCK"
 
-    elif total_risk >= 0.45:
-
+    elif risk >= 0.5:
         decision = "REVIEW"
 
     else:
-
         decision = "APPROVE"
 
     return {
-        **state,
-        "risk_score": round(total_risk, 2),
-        "decision": decision,
-        "reasons": state.get("reasons", [])
+        "risk_score": round(risk,2),
+        "decision": decision
     }
 
 # =========================================================
-# LANGGRAPH
+# LANGGRAPH BUILD
 # =========================================================
 
 workflow = StateGraph(dict)
 
 workflow.add_node("fraud", fraud_agent)
 workflow.add_node("aml", aml_agent)
-workflow.add_node("behavior", behavioral_agent)
-workflow.add_node("decision", decision_agent)
+workflow.add_node("behavior", behavior_agent)
+workflow.add_node("geo", geo_agent)
+workflow.add_node("memory", memory_agent)
+workflow.add_node("fusion", fusion_agent)
 
 workflow.set_entry_point("fraud")
 
-workflow.add_edge("fraud", "aml")
-workflow.add_edge("aml", "behavior")
-workflow.add_edge("behavior", "decision")
-workflow.add_edge("decision", END)
+workflow.add_edge("fraud","aml")
+workflow.add_edge("aml","behavior")
+workflow.add_edge("behavior","geo")
+workflow.add_edge("geo","memory")
+workflow.add_edge("memory","fusion")
+workflow.add_edge("fusion", END)
 
 app = workflow.compile()
 
 # =========================================================
-# METRICS
+# CONTROL BUTTONS
 # =========================================================
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
-metric1 = col1.empty()
-metric2 = col2.empty()
-metric3 = col3.empty()
+with col1:
 
-metric1.metric("TOTAL", 0)
-metric2.metric("BLOCK", 0)
-metric3.metric("REVIEW", 0)
+    if st.button("▶ Start Live Stream"):
+
+        st.session_state.running = True
+
+with col2:
+
+    if st.button("⏹ Stop Stream"):
+
+        st.session_state.running = False
+
+# =========================================================
+# DASHBOARD
+# =========================================================
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric("TOTAL", st.session_state.stats["TOTAL"])
+c2.metric("BLOCK", st.session_state.stats["BLOCK"])
+c3.metric("REVIEW", st.session_state.stats["REVIEW"])
+
+st.markdown("---")
+
+feed_placeholder = st.empty()
 
 # =========================================================
 # LIVE STREAM
 # =========================================================
 
-st.subheader("🚨 Live Feed")
+if st.session_state.running:
 
-feed_placeholder = st.empty()
+    for i in range(50):
 
-live_feed = []
+        if not st.session_state.running:
+            break
 
-# =========================================================
-# STREAM ENGINE
-# =========================================================
+        txn = generate_txn(i)
 
-for i in range(len(df)):
+        result = app.invoke(txn)
 
-    txn = df.iloc[i].to_dict()
+        txn.update(result)
 
-    result = app.invoke(txn)
+        st.session_state.feed.insert(0, txn)
 
-    decision = result["decision"]
+        st.session_state.stats["TOTAL"] += 1
 
-    risk = result["risk_score"]
+        decision = txn["decision"]
 
-    reasons = result["reasons"]
+        if decision not in st.session_state.stats:
+            st.session_state.stats[decision] = 0
 
-    # =====================================================
-    # UPDATE MEMORY
-    # =====================================================
+        st.session_state.stats[decision] += 1
 
-    update_customer_memory(txn, decision)
+        with feed_placeholder.container():
 
-    # =====================================================
-    # STORE RESULT
-    # =====================================================
+            st.subheader("🚨 Live Feed")
 
-    st.session_state.results.append({
-        "txn_id": txn["txn_id"],
-        "decision": decision,
-        "risk": risk,
-        "reasons": reasons,
-        "customer": txn["customer_id"]
-    })
+            for idx, r in enumerate(st.session_state.feed[:12]):
 
-    # =====================================================
-    # COUNTERS
-    # =====================================================
+                if r["decision"] == "BLOCK":
 
-    if decision not in st.session_state.stats:
+                    st.error(
+                        f"""
+🚨 BLOCK | {r['txn_id']} | Risk={r['risk_score']}
 
-        st.session_state.stats[decision] = 0
+Reasons: {' | '.join(r['reasons'])}
 
-    st.session_state.stats[decision] += 1
+Amount: ₹{r['amount']}
 
-    # =====================================================
-    # ALERT CARD
-    # =====================================================
+Customer: {r['customer_id']}
+"""
+                    )
 
-    if decision == "BLOCK":
+                elif r["decision"] == "REVIEW":
 
-        icon = "🚨"
-        color = "red"
+                    st.warning(
+                        f"""
+⚠️ REVIEW | {r['txn_id']} | Risk={r['risk_score']}
 
-    elif decision == "REVIEW":
+Reasons: {' | '.join(r['reasons'])}
 
-        icon = "⚠️"
-        color = "orange"
+Amount: ₹{r['amount']}
 
-    else:
+Customer: {r['customer_id']}
+"""
+                    )
 
-        icon = "🟢"
-        color = "green"
+                else:
 
-    reason_text = " | ".join(reasons)
+                    st.success(
+                        f"""
+🟢 APPROVE | {r['txn_id']} | Risk={r['risk_score']}
 
-    alert_html = f"""
-    <div style="
-        padding:12px;
-        border-radius:10px;
-        margin-bottom:10px;
-        background-color:#111111;
-        border-left:6px solid {color};
-    ">
-    <h4>{icon} {decision} | {txn['txn_id']} | Risk={risk}</h4>
-    <p><b>Reasons:</b> {reason_text}</p>
-    <p><b>Amount:</b> ₹{txn['amount']}</p>
-    <p><b>Customer:</b> {txn['customer_id']}</p>
-    </div>
-    """
+Amount: ₹{r['amount']}
 
-    live_feed.insert(0, alert_html)
+Customer: {r['customer_id']}
+"""
+                    )
 
-    # =====================================================
-    # REAL-TIME FEED UPDATE
-    # =====================================================
+                # UNIQUE BUTTON KEYS
+                btn_key = f"{r['txn_id']}_{idx}_{time.time()}"
 
-    feed_placeholder.markdown(
-        "".join(live_feed[:12]),
-        unsafe_allow_html=True
-    )
+                st.button(
+                    f"Take Action {r['txn_id']}",
+                    key=btn_key
+                )
 
-    # =====================================================
-    # LIVE METRICS UPDATE
-    # =====================================================
+        time.sleep(1)
 
-    metric1.metric(
-        "TOTAL",
-        len(st.session_state.results)
-    )
-
-    metric2.metric(
-        "BLOCK",
-        st.session_state.stats["BLOCK"]
-    )
-
-    metric3.metric(
-        "REVIEW",
-        st.session_state.stats["REVIEW"]
-    )
-
-    # =====================================================
-    # HUMAN ACTIONS
-    # =====================================================
-
-    unique_key = f"{txn['txn_id']}_{time.time_ns()}"
-
-    colA, colB = st.columns(2)
-
-    with colA:
-
-        if st.button(
-            f"Freeze {txn['txn_id']}",
-            key=f"freeze_{unique_key}"
-        ):
-
-            st.session_state.investigator_actions[
-                txn["txn_id"]
-            ] = "ACCOUNT FROZEN"
-
-    with colB:
-
-        if st.button(
-            f"Escalate {txn['txn_id']}",
-            key=f"escalate_{unique_key}"
-        ):
-
-            st.session_state.investigator_actions[
-                txn["txn_id"]
-            ] = "ESCALATED"
-
-    # =====================================================
-    # STREAM SPEED
-    # =====================================================
-
-    time.sleep(0.7)
+        st.rerun()
 
 # =========================================================
-# INVESTIGATOR ACTIONS
+# ACTION LOG
 # =========================================================
+
+st.markdown("---")
 
 st.subheader("📌 Investigator Actions")
 
-st.write(st.session_state.investigator_actions)
-
-# =========================================================
-# CUSTOMER RISK TABLE
-# =========================================================
-
-st.subheader("📊 High Risk Customers")
-
-rows = []
-
-for cid, mem in st.session_state.customer_memory.items():
-
-    avg_amt = (
-        mem["total_amount"] /
-        max(mem["txn_count"], 1)
-    )
-
-    rows.append({
-        "customer_id": cid,
-        "txn_count": mem["txn_count"],
-        "blocked_count": mem["blocked_count"],
-        "avg_amount": round(avg_amt, 2)
-    })
-
-risk_df = pd.DataFrame(rows)
-
-if not risk_df.empty:
-
-    risk_df = risk_df.sort_values(
-        by="blocked_count",
-        ascending=False
-    )
-
-    st.dataframe(
-        risk_df,
-        width="stretch"
-    )
+st.write(st.session_state.actions)
 
 # =========================================================
 # ANALYTICS
 # =========================================================
 
-st.subheader("📈 Decision Analytics")
+st.markdown("---")
 
-analytics_df = pd.DataFrame(st.session_state.results)
+st.subheader("📊 High Risk Customers")
 
-if not analytics_df.empty:
+risk_df = pd.DataFrame(st.session_state.feed)
 
-    chart_df = (
-        analytics_df["decision"]
-        .value_counts()
-        .reset_index()
-    )
+if not risk_df.empty:
 
-    chart_df.columns = ["Decision", "Count"]
+    high_risk = risk_df[
+        risk_df["risk_score"] >= 0.8
+    ][["customer_id","risk_score","txn_id"]]
 
-    fig = px.bar(
-        chart_df,
-        x="Decision",
-        y="Count",
-        title="Alert Distribution"
-    )
-
-    st.plotly_chart(
-        fig,
-        width="stretch"
-    )
+    st.dataframe(high_risk, width="stretch")
 
 # =========================================================
-# COMPLETED
+# END
 # =========================================================
 
-st.success("✅ Live Agentic Stream Completed")
+if not st.session_state.running:
+
+    st.success("✅ Stream Stopped")
+```
