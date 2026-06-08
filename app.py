@@ -22,6 +22,9 @@ st.title("🏦 Real-Time Financial Crime SOC (Agentic + LangGraph + HITL)")
 # SESSION STATE
 # =========================================================
 
+if "results" not in st.session_state:
+    st.session_state.results = []
+
 if "alerts" not in st.session_state:
     st.session_state.alerts = []
 
@@ -39,7 +42,7 @@ if "investigator_actions" not in st.session_state:
     st.session_state.investigator_actions = {}
 
 # =========================================================
-# TRANSACTION GENERATOR
+# DATA GENERATOR
 # =========================================================
 
 def generate_transaction(i):
@@ -52,6 +55,15 @@ def generate_transaction(i):
         "country_risk": random.choice([0, 1]),
         "device_change": random.choice([0, 1])
     }
+
+# =========================================================
+# SAMPLE DATAFRAME
+# =========================================================
+
+df = pd.DataFrame([
+    generate_transaction(i)
+    for i in range(50)
+])
 
 # =========================================================
 # CUSTOMER MEMORY
@@ -78,7 +90,7 @@ def update_customer_memory(txn, decision):
         st.session_state.customer_memory[cid]["blocked_count"] += 1
 
 # =========================================================
-# AGENTS
+# FRAUD AGENT
 # =========================================================
 
 def fraud_agent(state):
@@ -103,6 +115,8 @@ def fraud_agent(state):
     }
 
 # =========================================================
+# AML AGENT
+# =========================================================
 
 def aml_agent(state):
 
@@ -126,6 +140,8 @@ def aml_agent(state):
         "reasons": reasons
     }
 
+# =========================================================
+# BEHAVIORAL AGENT
 # =========================================================
 
 def behavioral_agent(state):
@@ -162,6 +178,8 @@ def behavioral_agent(state):
     }
 
 # =========================================================
+# DECISION AGENT
+# =========================================================
 
 def decision_agent(state):
 
@@ -191,7 +209,7 @@ def decision_agent(state):
     }
 
 # =========================================================
-# LANGGRAPH WORKFLOW
+# LANGGRAPH
 # =========================================================
 
 workflow = StateGraph(dict)
@@ -216,31 +234,31 @@ app = workflow.compile()
 
 col1, col2, col3 = st.columns(3)
 
-total_txns = (
-    st.session_state.stats["APPROVE"]
-    + st.session_state.stats["REVIEW"]
-    + st.session_state.stats["BLOCK"]
-)
+metric1 = col1.empty()
+metric2 = col2.empty()
+metric3 = col3.empty()
 
-col1.metric("TOTAL", total_txns)
-col2.metric("BLOCK", st.session_state.stats["BLOCK"])
-col3.metric("REVIEW", st.session_state.stats["REVIEW"])
+metric1.metric("TOTAL", 0)
+metric2.metric("BLOCK", 0)
+metric3.metric("REVIEW", 0)
 
 # =========================================================
-# LIVE STREAM PLACEHOLDER
+# LIVE STREAM
 # =========================================================
+
+st.subheader("🚨 Live Feed")
 
 feed_placeholder = st.empty()
 
-latest_alerts = []
+live_feed = []
 
 # =========================================================
-# LIVE STREAMING ENGINE
+# STREAM ENGINE
 # =========================================================
 
-for i in range(50):
+for i in range(len(df)):
 
-    txn = generate_transaction(i)
+    txn = df.iloc[i].to_dict()
 
     result = app.invoke(txn)
 
@@ -250,7 +268,27 @@ for i in range(50):
 
     reasons = result["reasons"]
 
+    # =====================================================
+    # UPDATE MEMORY
+    # =====================================================
+
     update_customer_memory(txn, decision)
+
+    # =====================================================
+    # STORE RESULT
+    # =====================================================
+
+    st.session_state.results.append({
+        "txn_id": txn["txn_id"],
+        "decision": decision,
+        "risk": risk,
+        "reasons": reasons,
+        "customer": txn["customer_id"]
+    })
+
+    # =====================================================
+    # COUNTERS
+    # =====================================================
 
     if decision not in st.session_state.stats:
 
@@ -258,96 +296,107 @@ for i in range(50):
 
     st.session_state.stats[decision] += 1
 
-    latest_alerts.insert(0, {
-        "txn_id": txn["txn_id"],
-        "decision": decision,
-        "risk": risk,
-        "reasons": reasons
-    })
-
-    latest_alerts = latest_alerts[:15]
-
     # =====================================================
-    # REAL TIME RENDER
+    # ALERT CARD
     # =====================================================
 
-    with feed_placeholder.container():
+    if decision == "BLOCK":
 
-        st.subheader("🚨 Live Feed")
+        icon = "🚨"
+        color = "red"
 
-        for idx, alert in enumerate(latest_alerts):
+    elif decision == "REVIEW":
 
-            txn_id = alert["txn_id"]
+        icon = "⚠️"
+        color = "orange"
 
-            risk = alert["risk"]
+    else:
 
-            decision = alert["decision"]
+        icon = "🟢"
+        color = "green"
 
-            reasons = " | ".join(alert["reasons"])
+    reason_text = " | ".join(reasons)
 
-            if decision == "BLOCK":
+    alert_html = f"""
+    <div style="
+        padding:12px;
+        border-radius:10px;
+        margin-bottom:10px;
+        background-color:#111111;
+        border-left:6px solid {color};
+    ">
+    <h4>{icon} {decision} | {txn['txn_id']} | Risk={risk}</h4>
+    <p><b>Reasons:</b> {reason_text}</p>
+    <p><b>Amount:</b> ₹{txn['amount']}</p>
+    <p><b>Customer:</b> {txn['customer_id']}</p>
+    </div>
+    """
 
-                st.error(
-                    f"""
-🚨 BLOCK | {txn_id} | Risk={risk}
-
-Reasons: {reasons}
-"""
-                )
-
-            elif decision == "REVIEW":
-
-                st.warning(
-                    f"""
-⚠️ REVIEW | {txn_id} | Risk={risk}
-
-Reasons: {reasons}
-"""
-                )
-
-            else:
-
-                st.success(
-                    f"""
-🟢 APPROVE | {txn_id} | Risk={risk}
-"""
-                )
-
-            # =================================================
-            # UNIQUE BUTTONS
-            # =================================================
-
-            unique_key = f"{txn_id}_{idx}_{time.time_ns()}"
-
-            colA, colB = st.columns(2)
-
-            with colA:
-
-                if st.button(
-                    f"Freeze {txn_id}",
-                    key=f"freeze_{unique_key}"
-                ):
-
-                    st.session_state.investigator_actions[
-                        txn_id
-                    ] = "ACCOUNT FROZEN"
-
-            with colB:
-
-                if st.button(
-                    f"Escalate {txn_id}",
-                    key=f"escalate_{unique_key}"
-                ):
-
-                    st.session_state.investigator_actions[
-                        txn_id
-                    ] = "ESCALATED"
+    live_feed.insert(0, alert_html)
 
     # =====================================================
-    # STREAM DELAY
+    # REAL-TIME FEED UPDATE
     # =====================================================
 
-    time.sleep(0.5)
+    feed_placeholder.markdown(
+        "".join(live_feed[:12]),
+        unsafe_allow_html=True
+    )
+
+    # =====================================================
+    # LIVE METRICS UPDATE
+    # =====================================================
+
+    metric1.metric(
+        "TOTAL",
+        len(st.session_state.results)
+    )
+
+    metric2.metric(
+        "BLOCK",
+        st.session_state.stats["BLOCK"]
+    )
+
+    metric3.metric(
+        "REVIEW",
+        st.session_state.stats["REVIEW"]
+    )
+
+    # =====================================================
+    # HUMAN ACTIONS
+    # =====================================================
+
+    unique_key = f"{txn['txn_id']}_{time.time_ns()}"
+
+    colA, colB = st.columns(2)
+
+    with colA:
+
+        if st.button(
+            f"Freeze {txn['txn_id']}",
+            key=f"freeze_{unique_key}"
+        ):
+
+            st.session_state.investigator_actions[
+                txn["txn_id"]
+            ] = "ACCOUNT FROZEN"
+
+    with colB:
+
+        if st.button(
+            f"Escalate {txn['txn_id']}",
+            key=f"escalate_{unique_key}"
+        ):
+
+            st.session_state.investigator_actions[
+                txn["txn_id"]
+            ] = "ESCALATED"
+
+    # =====================================================
+    # STREAM SPEED
+    # =====================================================
+
+    time.sleep(0.7)
 
 # =========================================================
 # INVESTIGATOR ACTIONS
@@ -399,7 +448,7 @@ if not risk_df.empty:
 
 st.subheader("📈 Decision Analytics")
 
-analytics_df = pd.DataFrame(latest_alerts)
+analytics_df = pd.DataFrame(st.session_state.results)
 
 if not analytics_df.empty:
 
@@ -424,7 +473,7 @@ if not analytics_df.empty:
     )
 
 # =========================================================
-# END
+# COMPLETED
 # =========================================================
 
 st.success("✅ Live Agentic Stream Completed")
