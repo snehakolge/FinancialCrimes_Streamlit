@@ -3,192 +3,146 @@ import pandas as pd
 import numpy as np
 import time
 
-# =========================
-# OPTIONAL SHAP (SAFE)
-# =========================
-try:
-    import shap
-    SHAP_AVAILABLE = True
-except Exception:
-    shap = None
-    SHAP_AVAILABLE = False
+from sklearn.model_selection import train_test_split
+from xgboost import XGBClassifier
 
-
-# =========================
-# STREAMLIT CONFIG
-# =========================
+# ==============================
+# PAGE CONFIG
+# ==============================
 st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 
-st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
+st.title("🏦 Real-Time Financial Crime SOC (ML + Agentic + HITL)")
 
 
-# =========================
+# ==============================
 # SESSION STATE
-# =========================
-if "actions" not in st.session_state:
-    st.session_state.actions = {}
+# ==============================
+if "model" not in st.session_state:
+    st.session_state.model = None
 
-if "stream_running" not in st.session_state:
-    st.session_state.stream_running = True
+if "override_log" not in st.session_state:
+    st.session_state.override_log = []
+
+if "running" not in st.session_state:
+    st.session_state.running = True
 
 
-# =========================
-# DATA GENERATION
-# =========================
-def generate_data(n=50):
+# ==============================
+# DATA GENERATION (SIMULATION)
+# ==============================
+def generate_data(n=200):
     data = []
+
     for i in range(n):
         amount = np.random.randint(100, 20000)
         velocity = np.random.randint(1, 50)
         deviation = np.random.random()
 
-        risk = (
-            (amount / 20000) * 0.4 +
-            (velocity / 50) * 0.4 +
-            deviation * 0.2
-        )
+        # synthetic label (for training)
+        label = 1 if (amount > 15000 or velocity > 40 or deviation > 0.8) else 0
 
         data.append({
             "transaction_id": f"T{i}",
             "amount": amount,
             "velocity": velocity,
-            "deviation": round(deviation, 2),
-            "risk_score": round(risk, 2)
+            "deviation": deviation,
+            "label": label
         })
 
     return pd.DataFrame(data)
 
 
-# =========================
+# ==============================
+# TRAIN ML MODEL
+# ==============================
+@st.cache_resource
+def train_model():
+    df = generate_data(1000)
+
+    X = df[["amount", "velocity", "deviation"]]
+    y = df["label"]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+
+    model = XGBClassifier(
+        n_estimators=50,
+        max_depth=4,
+        learning_rate=0.1,
+        eval_metric="logloss"
+    )
+
+    model.fit(X_train, y_train)
+
+    return model
+
+
+# ==============================
 # AGENT LOGIC
-# =========================
-def fraud_agent(row):
-    return row["risk_score"] > 0.7
+# ==============================
+def fraud_agent(prob):
+    return prob
 
 
 def aml_agent(row):
     return row["velocity"] > 35
 
 
-def fusion_agent(row):
-    score = row["risk_score"]
-
-    if score > 0.75:
+def decision_agent(prob):
+    if prob > 0.8:
         return "BLOCK"
-    elif score > 0.40:
+    elif prob > 0.4:
         return "REVIEW"
     else:
         return "APPROVE"
 
 
-# =========================
-# SIMPLE AGENT GRAPH (NO LANGGRAPH CRASH)
-# =========================
-class SimpleGraph:
-    def invoke(self, state):
-        row = state["transaction"]
+def fusion_agent(prob, aml_flag):
+    risk = prob + (0.1 if aml_flag else 0)
 
-        fraud = fraud_agent(row)
-        aml = aml_agent(row)
-
-        risk = row["risk_score"]
-        decision = fusion_agent(row)
-
-        shap_score = risk * 100  # safe placeholder
-
-        return {
-            "fraud_flag": fraud,
-            "aml_flag": aml,
-            "risk_score": risk,
-            "decision": decision,
-            "shap_score": shap_score
-        }
+    if risk > 0.85:
+        return "BLOCK"
+    elif risk > 0.5:
+        return "REVIEW"
+    else:
+        return "APPROVE"
 
 
-def build_graph():
-    return SimpleGraph()
+# ==============================
+# LOAD MODEL
+# ==============================
+model = train_model()
 
 
-app = build_graph()
+# ==============================
+# STREAM DATA
+# ==============================
+df_stream = generate_data(50)
 
+col1, col2, col3 = st.columns(3)
 
-# =========================
-# UI PLACEHOLDERS
-# =========================
+block_count = 0
+review_count = 0
+approve_count = 0
+
 stream_box = st.empty()
-summary_box = st.empty()
+override_box = st.empty()
 
-
-# =========================
-# DATA
-# =========================
-df = generate_data(50)
-
-blocked = 0
-review = 0
-approve = 0
 
 results = []
 
 
-# =========================
+# ==============================
 # LIVE STREAM LOOP
-# =========================
-for i, row in df.iterrows():
+# ==============================
+for i, row in df_stream.iterrows():
 
-    output = app.invoke({"transaction": row.to_dict()})
+    X_input = pd.DataFrame([[
+        row["amount"],
+        row["velocity"],
+        row["deviation"]
+    ]], columns=["amount", "velocity", "deviation"])
 
-    row["decision"] = output["decision"]
-    row["risk_score"] = output["risk_score"]
+    # ML PREDICTION
+    fraud_prob = model.predict_proba(X_input)[0][1]
 
-    results.append(row)
-
-    # counters
-    if row["decision"] == "BLOCK":
-        blocked += 1
-    elif row["decision"] == "REVIEW":
-        review += 1
-    else:
-        approve += 1
-
-
-    # =========================
-    # LIVE DASHBOARD UPDATE
-    # =========================
-    with stream_box.container():
-
-        st.subheader("📡 Live Transaction Stream")
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("BLOCKED", blocked)
-        col2.metric("REVIEW", review)
-        col3.metric("APPROVED", approve)
-
-        st.divider()
-
-        # show last 15 transactions only
-        for r in results[-15:]:
-
-            tag = "🚨" if r["decision"] == "BLOCK" else ("⚠️" if r["decision"] == "REVIEW" else "🟢")
-
-            st.write(
-                f"{tag} {r['transaction_id']} | "
-                f"{r['decision']} | Risk={r['risk_score']:.2f}"
-            )
-
-    time.sleep(0.15)
-
-
-# =========================
-# FINAL SUMMARY
-# =========================
-with summary_box.container():
-    st.success("Live Agentic Stream Completed")
-
-    st.write({
-        "TOTAL": len(results),
-        "BLOCKED": blocked,
-        "REVIEW": review,
-        "APPROVED": approve,
-        "SHAP_ENABLED": SHAP_AVAILABLE
-    })
+    # AG
