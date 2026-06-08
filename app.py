@@ -1,135 +1,35 @@
 import streamlit as st
 import pandas as pd
-import random
 import time
-from typing import TypedDict, Dict, Any, List
-
-from langgraph.graph import StateGraph, END
-
+from langgraph_engine import build_graph, generate_data
 
 # =====================================================
-# STATE
+# PAGE CONFIG
 # =====================================================
-class TxnState(TypedDict):
-    transaction: Dict[str, Any]
-    fraud_score: float
-    aml_score: float
-    rbi_flags: List[str]
-    risk_score: float
-    decision: str
+st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 
+st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
 
 # =====================================================
-# AGENTS
+# SESSION STATE
 # =====================================================
-def fraud_agent(state):
-    tx = state["transaction"]
-    score = tx.get("amount", 0)/10000 + tx.get("velocity_7d", 0)/50
-    return {"fraud_score": min(score, 1.0)}
-
-
-def aml_agent(state):
-    tx = state["transaction"]
-    score = tx.get("amount", 0)/20000 + tx.get("customer_risk", 0.3)
-    return {"aml_score": min(score, 1.0)}
-
-
-def rbi_agent(state):
-    tx = state["transaction"]
-    flags = []
-
-    if tx.get("amount", 0) > 10000:
-        flags.append("HIGH_VALUE")
-
-    if tx.get("is_night", 0):
-        flags.append("NIGHT_TXN")
-
-    if tx.get("velocity_7d", 0) > 20:
-        flags.append("VELOCITY_SPIKE")
-
-    return {"rbi_flags": flags}
-
-
-def fusion_agent(state):
-    fraud = state.get("fraud_score", 0)
-    aml = state.get("aml_score", 0)
-    flags = state.get("rbi_flags", [])
-
-    risk = fraud * 0.5 + aml * 0.4 + len(flags) * 0.1
-    risk = min(risk, 1.0)
-
-    if risk >= 0.7:
-        decision = "BLOCK"
-    elif risk >= 0.4:
-        decision = "REVIEW"
-    else:
-        decision = "APPROVE"
-
-    return {"risk_score": risk, "decision": decision}
-
-
-# =====================================================
-# GRAPH BUILDER (IN SAME FILE)
-# =====================================================
-def build_graph():
-    g = StateGraph(TxnState)
-
-    g.add_node("fraud", fraud_agent)
-    g.add_node("aml", aml_agent)
-    g.add_node("rbi", rbi_agent)
-    g.add_node("fusion", fusion_agent)
-
-    g.set_entry_point("fraud")
-
-    g.add_edge("fraud", "aml")
-    g.add_edge("aml", "rbi")
-    g.add_edge("rbi", "fusion")
-
-    g.add_conditional_edges(
-        "fusion",
-        lambda s: s["decision"],
-        {
-            "BLOCK": END,
-            "REVIEW": END,
-            "APPROVE": END
-        }
-    )
-
-    return g.compile()
-
-
-# =====================================================
-# SYNTHETIC DATA
-# =====================================================
-def generate_data(n=50):
-    return [
-        {
-            "transaction_id": f"T{i}",
-            "amount": random.randint(100, 20000),
-            "velocity_7d": random.randint(1, 60),
-            "failed_txn_flag": random.randint(0, 1),
-            "is_night": random.randint(0, 1),
-            "customer_risk": round(random.random(), 2)
-        }
-        for i in range(n)
-    ]
-
-
-# =====================================================
-# STREAMLIT APP
-# =====================================================
-st.set_page_config(page_title="SOC Platform", layout="wide")
-
-st.title("🏦 Real-Time Financial Crime SOC (Single File Version)")
-
-
-# INIT
 if "actions" not in st.session_state:
     st.session_state.actions = {}
 
+if "stream_index" not in st.session_state:
+    st.session_state.stream_index = 0
+
+
+# =====================================================
+# INIT ENGINE
+# =====================================================
 app = build_graph()
 df = pd.DataFrame(generate_data(50))
 
+
+# =====================================================
+# RUN AGENTS (Batch simulation but streamed UI)
+# =====================================================
 results = []
 
 for row in df.to_dict(orient="records"):
@@ -148,40 +48,93 @@ for row in df.to_dict(orient="records"):
 result_df = pd.DataFrame(results)
 
 
-# DASHBOARD
-c1, c2, c3 = st.columns(3)
-c1.metric("TOTAL", len(result_df))
-c2.metric("BLOCKED", len(result_df[result_df["decision"] == "BLOCK"]))
-c3.metric("REVIEW", len(result_df[result_df["decision"] == "REVIEW"]))
+# =====================================================
+# METRICS PANEL
+# =====================================================
+col1, col2, col3 = st.columns(3)
 
-st.divider()
-st.subheader("Live Stream")
-
-# LIVE TABLE
-for i, row in result_df.iterrows():
-
-    with st.container(border=True):
-
-        st.write(row["transaction_id"], row["amount"], row["decision"])
-
-        tx = row["transaction_id"]
-
-        k1 = f"ap_{tx}_{i}"
-        k2 = f"bl_{tx}_{i}"
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if st.button("Approve", key=k1):
-                st.session_state.actions[tx] = "APPROVED"
-
-        with col2:
-            if st.button("Block", key=k2):
-                st.session_state.actions[tx] = "BLOCKED"
-
-        time.sleep(0.03)
+col1.metric("TOTAL TRANSACTIONS", len(result_df))
+col2.metric("BLOCKED", len(result_df[result_df["decision"] == "BLOCK"]))
+col3.metric("REVIEW", len(result_df[result_df["decision"] == "REVIEW"]))
 
 
 st.divider()
-st.subheader("Override Log")
-st.write(st.session_state.actions)
+st.subheader("📡 LIVE SOC STREAM (Real-Time Simulation)")
+
+
+# =====================================================
+# REAL LIVE STREAM ENGINE
+# =====================================================
+placeholder = st.empty()
+
+actions_log = st.session_state.actions
+
+
+# simulate continuous streaming behavior
+for i in range(len(result_df)):
+
+    row = result_df.iloc[i]
+
+    with placeholder.container():
+
+        st.markdown("### 🔴 Incoming Transaction Stream")
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        c1.metric("Txn ID", row["transaction_id"])
+        c2.metric("Amount", row["amount"])
+        c3.metric("Risk Score", round(row["risk_score"], 2))
+        c4.metric("Decision", row["decision"])
+
+        st.write("---")
+
+        tx_id = row["transaction_id"]
+
+        colA, colB = st.columns(2)
+
+        # ---------------- APPROVE ----------------
+        with colA:
+            approve_key = f"approve_{tx_id}_{i}"
+
+            if st.button("✔ Approve", key=approve_key):
+                st.session_state.actions[tx_id] = "APPROVED"
+                st.success(f"{tx_id} APPROVED by Analyst")
+
+        # ---------------- BLOCK ----------------
+        with colB:
+            block_key = f"block_{tx_id}_{i}"
+
+            if st.button("⛔ Block", key=block_key):
+                st.session_state.actions[tx_id] = "BLOCKED"
+                st.error(f"{tx_id} BLOCKED by Analyst")
+
+        st.write("")
+
+        # show current override if exists
+        if tx_id in st.session_state.actions:
+            st.info(f"Override: {st.session_state.actions[tx_id]}")
+
+    time.sleep(0.6)
+
+
+# =====================================================
+# OVERRIDE LOG
+# =====================================================
+st.divider()
+st.subheader("🧠 Human Override Log")
+
+if st.session_state.actions:
+    st.json(st.session_state.actions)
+else:
+    st.info("No overrides yet")
+
+
+# =====================================================
+# FINAL SUMMARY
+# =====================================================
+st.divider()
+st.subheader("📊 Decision Breakdown")
+
+st.bar_chart(
+    result_df["decision"].value_counts()
+)
