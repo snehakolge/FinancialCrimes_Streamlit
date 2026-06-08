@@ -5,11 +5,11 @@ import time
 from typing import TypedDict, List
 from langgraph.graph import StateGraph, END
 
-# ---------------- STREAMLIT ----------------
+# ---------------- UI ----------------
 st.set_page_config(page_title="SOC AI Platform", layout="wide")
 st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
 
-# ---------------- SYNTHETIC TRANSACTION ----------------
+# ---------------- DATA GENERATOR ----------------
 def generate_txn():
     return {
         "transaction_id": f"T{random.randint(1000,9999)}",
@@ -27,6 +27,7 @@ class State(TypedDict):
     rbi_flags: List[str]
     risk_score: float
     decision: str
+    route: List[str]
 
 # ---------------- AGENTS ----------------
 
@@ -93,7 +94,6 @@ def decision_agent(state: State):
 # ---------------- ROUTER ----------------
 def router(state: State):
     t = state["transaction"]
-
     route = []
 
     if t["amount"] > 50000 or t["velocity_7d"] > 30:
@@ -132,18 +132,18 @@ def build_graph():
 
 app = build_graph()
 
-# ---------------- SESSION STATE (LIVE STREAM CONTROL) ----------------
+# ---------------- SESSION STATE ----------------
 if "logs" not in st.session_state:
     st.session_state.logs = []
 
 if "running" not in st.session_state:
     st.session_state.running = False
 
-# ---------------- UI BUTTONS ----------------
+# ---------------- UI CONTROLS ----------------
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("▶ Start Live SOC Stream"):
+    if st.button("▶ Start SOC Stream"):
         st.session_state.running = True
 
 with col2:
@@ -152,10 +152,10 @@ with col2:
 
 placeholder = st.empty()
 
-# ---------------- LIVE LOOP (CONTROLLED) ----------------
+# ---------------- STREAM ENGINE ----------------
 if st.session_state.running:
 
-    for i in range(20):  # controlled streaming (safe for Streamlit)
+    for i in range(25):  # controlled stream (safe)
 
         txn = generate_txn()
 
@@ -186,27 +186,32 @@ if st.session_state.running:
             st.subheader("📊 Risk Trend")
             st.line_chart(df["risk_score"])
 
-            st.subheader("🚨 Live Alerts")
+            st.subheader("🚨 Latest Alerts")
 
             latest = df.tail(10)
             st.dataframe(latest)
 
-            # ---------------- HUMAN-IN-THE-LOOP ----------------
+            # ---------------- ALERT ENGINE ----------------
             for _, row in latest.iterrows():
 
                 if row["decision"] == "BLOCK":
                     st.error(
-                        f"🚨 AUTO FRAUD ALERT | TXN {row['transaction_id']} | Risk {row['risk_score']:.2f}"
+                        f"🚨 FRAUD ALERT | TXN {row['transaction_id']} | Risk {row['risk_score']:.2f}"
                     )
-
-                    st.button(f"👤 Approve Override {row['transaction_id']}")
 
                 elif row["decision"] == "REVIEW":
                     st.warning(
                         f"⚠️ HUMAN REVIEW REQUIRED | TXN {row['transaction_id']} | Risk {row['risk_score']:.2f}"
                     )
 
+                # ---------------- FIX: UNIQUE BUTTON KEY ----------------
+                if row["decision"] in ["BLOCK", "REVIEW"]:
+                    st.button(
+                        f"👤 Take Action {row['transaction_id']}",
+                        key=f"action_{row['transaction_id']}_{row.name}"
+                    )
+
         time.sleep(1)
 
 else:
-    st.info("Click ▶ Start Live SOC Stream to begin agentic monitoring.")
+    st.info("Click ▶ Start SOC Stream to begin real-time agentic monitoring.")
