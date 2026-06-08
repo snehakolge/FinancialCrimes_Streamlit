@@ -29,9 +29,6 @@ if "stats" not in st.session_state:
         "FREEZE": 0
     }
 
-if "FREEZE" not in st.session_state.stats:
-    st.session_state.stats["FREEZE"] = 0
-
 if "alerts" not in st.session_state:
     st.session_state.alerts = []
 
@@ -48,30 +45,10 @@ if "actions" not in st.session_state:
     st.session_state.actions = {}
 
 # =========================================================
-# TOP METRICS
+# METRICS PLACEHOLDER
 # =========================================================
 
-m1, m2, m3, m4 = st.columns(4)
-
-m1.metric(
-    "TOTAL",
-    sum(st.session_state.stats.values())
-)
-
-m2.metric(
-    "BLOCK",
-    st.session_state.stats["BLOCK"]
-)
-
-m3.metric(
-    "REVIEW",
-    st.session_state.stats["REVIEW"]
-)
-
-m4.metric(
-    "FREEZE",
-    st.session_state.stats["FREEZE"]
-)
+metric_placeholder = st.empty()
 
 # =========================================================
 # TRANSACTION GENERATOR
@@ -121,7 +98,7 @@ class FraudState(TypedDict):
 
 def amount_agent(state):
 
-    if state.get("amount", 0) > 12000:
+    if state.get("amount",0) > 12000:
         state["risk_score"] += 0.4
         state["reasons"].append("High Amount Spike")
 
@@ -130,7 +107,7 @@ def amount_agent(state):
 
 def velocity_agent(state):
 
-    if state.get("velocity", 0) > 8:
+    if state.get("velocity",0) > 8:
         state["risk_score"] += 0.3
         state["reasons"].append("Velocity Breach")
 
@@ -139,7 +116,7 @@ def velocity_agent(state):
 
 def device_agent(state):
 
-    if state.get("device_change", 0) == 1:
+    if state.get("device_change",0) == 1:
         state["risk_score"] += 0.2
         state["reasons"].append("Device Change Detected")
 
@@ -148,7 +125,7 @@ def device_agent(state):
 
 def geo_agent(state):
 
-    if state.get("geo_risk", 0) == 1:
+    if state.get("geo_risk",0) == 1:
         state["risk_score"] += 0.2
         state["reasons"].append("High Risk Geography")
 
@@ -157,7 +134,7 @@ def geo_agent(state):
 
 def behavior_agent(state):
 
-    if state.get("behavioral_anomaly", 0) == 1:
+    if state.get("behavioral_anomaly",0) == 1:
         state["risk_score"] += 0.2
         state["reasons"].append("Behavioral Anomaly")
 
@@ -184,18 +161,16 @@ def decision_agent(state):
     risk = state["risk_score"]
 
     if risk >= 1.2:
-        decision = "FREEZE"
+        state["decision"] = "FREEZE"
 
     elif risk >= 0.8:
-        decision = "BLOCK"
+        state["decision"] = "BLOCK"
 
     elif risk >= 0.5:
-        decision = "REVIEW"
+        state["decision"] = "REVIEW"
 
     else:
-        decision = "APPROVE"
-
-    state["decision"] = decision
+        state["decision"] = "APPROVE"
 
     return state
 
@@ -226,16 +201,44 @@ workflow.add_edge("decision", END)
 app = workflow.compile()
 
 # =========================================================
+# LIVE METRICS
+# =========================================================
+
+with metric_placeholder.container():
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "TOTAL",
+        sum(st.session_state.stats.values())
+    )
+
+    c2.metric(
+        "BLOCK",
+        st.session_state.stats["BLOCK"]
+    )
+
+    c3.metric(
+        "REVIEW",
+        st.session_state.stats["REVIEW"]
+    )
+
+    c4.metric(
+        "FREEZE",
+        st.session_state.stats["FREEZE"]
+    )
+
+# =========================================================
 # CONTROL BUTTONS
 # =========================================================
 
-c1, c2 = st.columns(2)
+col1, col2 = st.columns(2)
 
-with c1:
+with col1:
     if st.button("▶ Start Live Stream"):
         st.session_state.running = True
 
-with c2:
+with col2:
     if st.button("⏹ Stop Stream"):
         st.session_state.running = False
 
@@ -247,53 +250,57 @@ feed_placeholder = st.empty()
 
 if st.session_state.running:
 
-    st.subheader("🚨 Live Feed")
-
     txn = generate_transaction()
 
     result = app.invoke(txn)
 
     decision = result["decision"]
 
-    # SAFE COUNTER UPDATE
+    # SAFE UPDATE
     if decision not in st.session_state.stats:
         st.session_state.stats[decision] = 0
 
     st.session_state.stats[decision] += 1
 
-    # STORE ALERT
+    # STORE ALERTS
     st.session_state.alerts.insert(0, result)
 
-    # KEEP ONLY LAST 100 ALERTS
-    st.session_state.alerts = st.session_state.alerts[:100]
+    # KEEP ONLY LAST 15 ALERTS
+    st.session_state.alerts = st.session_state.alerts[:15]
 
     # UPDATE METRICS
-    m1.metric(
-        "TOTAL",
-        sum(st.session_state.stats.values())
-    )
+    with metric_placeholder.container():
 
-    m2.metric(
-        "BLOCK",
-        st.session_state.stats["BLOCK"]
-    )
+        c1, c2, c3, c4 = st.columns(4)
 
-    m3.metric(
-        "REVIEW",
-        st.session_state.stats["REVIEW"]
-    )
+        c1.metric(
+            "TOTAL",
+            sum(st.session_state.stats.values())
+        )
 
-    m4.metric(
-        "FREEZE",
-        st.session_state.stats["FREEZE"]
-    )
+        c2.metric(
+            "BLOCK",
+            st.session_state.stats["BLOCK"]
+        )
+
+        c3.metric(
+            "REVIEW",
+            st.session_state.stats["REVIEW"]
+        )
+
+        c4.metric(
+            "FREEZE",
+            st.session_state.stats["FREEZE"]
+        )
 
     # DISPLAY FEED
     with feed_placeholder.container():
 
-        for idx, r in enumerate(st.session_state.alerts[:15]):
+        st.subheader("🚨 Live Feed")
 
-            decision = r["decision"]
+        latest_alerts = st.session_state.alerts[:10]
+
+        for idx, r in enumerate(latest_alerts):
 
             emoji = {
                 "APPROVE": "🟢",
@@ -304,7 +311,7 @@ if st.session_state.running:
 
             st.markdown(
                 f"""
-### {emoji[decision]} {decision} | {r['txn_id']} | Risk={round(r['risk_score'],2)}
+### {emoji[r['decision']]} {r['decision']} | {r['txn_id']} | Risk={round(r['risk_score'],2)}
 
 Reasons: {' | '.join(r['reasons'])}
 
@@ -314,10 +321,10 @@ Customer: {r['customer_id']}
                 """
             )
 
-            # UNIQUE BUTTON KEY
-            action_key = f"{r['txn_id']}_{idx}_{decision}"
+            # UNIQUE KEY
+            action_key = f"{r['txn_id']}_{idx}_{r['decision']}"
 
-            if decision in ["BLOCK", "FREEZE", "REVIEW"]:
+            if r["decision"] in ["BLOCK", "REVIEW", "FREEZE"]:
 
                 if st.button(
                     f"Investigate {r['txn_id']}",
@@ -366,8 +373,13 @@ if not risk_df.empty:
 st.subheader("📈 Decision Analytics")
 
 chart_df = pd.DataFrame({
-    "Decision": list(st.session_state.stats.keys()),
-    "Count": list(st.session_state.stats.values())
+    "Decision": ["APPROVE", "REVIEW", "BLOCK", "FREEZE"],
+    "Count": [
+        st.session_state.stats["APPROVE"],
+        st.session_state.stats["REVIEW"],
+        st.session_state.stats["BLOCK"],
+        st.session_state.stats["FREEZE"]
+    ]
 })
 
 st.bar_chart(
