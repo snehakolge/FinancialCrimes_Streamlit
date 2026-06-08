@@ -191,7 +191,7 @@ def decision_agent(state):
     }
 
 # =========================================================
-# LANGGRAPH
+# LANGGRAPH WORKFLOW
 # =========================================================
 
 workflow = StateGraph(dict)
@@ -227,15 +227,15 @@ col2.metric("BLOCK", st.session_state.stats["BLOCK"])
 col3.metric("REVIEW", st.session_state.stats["REVIEW"])
 
 # =========================================================
-# LIVE FEED
+# LIVE STREAM PLACEHOLDER
 # =========================================================
-
-st.subheader("🚨 Live Feed")
 
 feed_placeholder = st.empty()
 
+latest_alerts = []
+
 # =========================================================
-# STREAMING
+# LIVE STREAMING ENGINE
 # =========================================================
 
 for i in range(50):
@@ -258,53 +258,66 @@ for i in range(50):
 
     st.session_state.stats[decision] += 1
 
-    alert = {
+    latest_alerts.insert(0, {
         "txn_id": txn["txn_id"],
-        "customer_id": txn["customer_id"],
         "decision": decision,
         "risk": risk,
         "reasons": reasons
-    }
+    })
 
-    st.session_state.alerts.insert(0, alert)
+    latest_alerts = latest_alerts[:15]
 
-    st.session_state.alerts = st.session_state.alerts[:15]
+    # =====================================================
+    # REAL TIME RENDER
+    # =====================================================
 
     with feed_placeholder.container():
 
-        for idx, alert in enumerate(st.session_state.alerts):
+        st.subheader("🚨 Live Feed")
+
+        for idx, alert in enumerate(latest_alerts):
 
             txn_id = alert["txn_id"]
 
-            decision = alert["decision"]
-
             risk = alert["risk"]
 
-            reasons = alert["reasons"]
+            decision = alert["decision"]
 
-            reason_text = " | ".join(reasons)
+            reasons = " | ".join(alert["reasons"])
 
             if decision == "BLOCK":
 
                 st.error(
-                    f"🚨 BLOCK | {txn_id} | Risk={risk}\n\nReasons: {reason_text}"
+                    f"""
+🚨 BLOCK | {txn_id} | Risk={risk}
+
+Reasons: {reasons}
+"""
                 )
 
             elif decision == "REVIEW":
 
                 st.warning(
-                    f"⚠️ REVIEW | {txn_id} | Risk={risk}\n\nReasons: {reason_text}"
+                    f"""
+⚠️ REVIEW | {txn_id} | Risk={risk}
+
+Reasons: {reasons}
+"""
                 )
 
             else:
 
                 st.success(
-                    f"🟢 APPROVE | {txn_id} | Risk={risk}"
+                    f"""
+🟢 APPROVE | {txn_id} | Risk={risk}
+"""
                 )
 
-            # UNIQUE BUTTON KEYS
+            # =================================================
+            # UNIQUE BUTTONS
+            # =================================================
 
-            unique_id = f"{txn_id}_{idx}_{i}_{time.time()}"
+            unique_key = f"{txn_id}_{idx}_{time.time_ns()}"
 
             colA, colB = st.columns(2)
 
@@ -312,7 +325,7 @@ for i in range(50):
 
                 if st.button(
                     f"Freeze {txn_id}",
-                    key=f"freeze_{unique_id}"
+                    key=f"freeze_{unique_key}"
                 ):
 
                     st.session_state.investigator_actions[
@@ -323,14 +336,18 @@ for i in range(50):
 
                 if st.button(
                     f"Escalate {txn_id}",
-                    key=f"escalate_{unique_id}"
+                    key=f"escalate_{unique_key}"
                 ):
 
                     st.session_state.investigator_actions[
                         txn_id
                     ] = "ESCALATED"
 
-    time.sleep(0.15)
+    # =====================================================
+    # STREAM DELAY
+    # =====================================================
+
+    time.sleep(0.5)
 
 # =========================================================
 # INVESTIGATOR ACTIONS
@@ -382,7 +399,7 @@ if not risk_df.empty:
 
 st.subheader("📈 Decision Analytics")
 
-analytics_df = pd.DataFrame(st.session_state.alerts)
+analytics_df = pd.DataFrame(latest_alerts)
 
 if not analytics_df.empty:
 
@@ -407,7 +424,7 @@ if not analytics_df.empty:
     )
 
 # =========================================================
-# COMPLETE
+# END
 # =========================================================
 
 st.success("✅ Live Agentic Stream Completed")
