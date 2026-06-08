@@ -1,21 +1,30 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import random
 import time
 
-# ---------------- SAFE SHAP IMPORT ----------------
+# =========================
+# OPTIONAL SHAP (SAFE)
+# =========================
 try:
     import shap
     SHAP_AVAILABLE = True
-except:
+except Exception:
+    shap = None
     SHAP_AVAILABLE = False
 
 
-# ---------------- SESSION STATE ----------------
-if "run_id" not in st.session_state:
-    st.session_state.run_id = 0
+# =========================
+# STREAMLIT CONFIG
+# =========================
+st.set_page_config(page_title="Financial Crime SOC", layout="wide")
 
+st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
+
+
+# =========================
+# SESSION STATE
+# =========================
 if "actions" not in st.session_state:
     st.session_state.actions = {}
 
@@ -23,7 +32,9 @@ if "stream_running" not in st.session_state:
     st.session_state.stream_running = True
 
 
-# ---------------- DATA GENERATION ----------------
+# =========================
+# DATA GENERATION
+# =========================
 def generate_data(n=50):
     data = []
     for i in range(n):
@@ -48,7 +59,9 @@ def generate_data(n=50):
     return pd.DataFrame(data)
 
 
-# ---------------- AGENT LOGIC ----------------
+# =========================
+# AGENT LOGIC
+# =========================
 def fraud_agent(row):
     return row["risk_score"] > 0.7
 
@@ -58,34 +71,35 @@ def aml_agent(row):
 
 
 def fusion_agent(row):
-    risk = row["risk_score"]
-    if risk > 0.75:
+    score = row["risk_score"]
+
+    if score > 0.75:
         return "BLOCK"
-    elif risk > 0.4:
+    elif score > 0.40:
         return "REVIEW"
     else:
         return "APPROVE"
 
 
-# ---------------- SIMPLE GRAPH (NO LANGGRAPH BUGS) ----------------
+# =========================
+# SIMPLE AGENT GRAPH (NO LANGGRAPH CRASH)
+# =========================
 class SimpleGraph:
     def invoke(self, state):
         row = state["transaction"]
 
-        fraud_flag = fraud_agent(row)
-        aml_flag = aml_agent(row)
+        fraud = fraud_agent(row)
+        aml = aml_agent(row)
 
-        risk_score = row["risk_score"]
-
+        risk = row["risk_score"]
         decision = fusion_agent(row)
 
-        # safe SHAP placeholder
-        shap_score = risk_score * 100
+        shap_score = risk * 100  # safe placeholder
 
         return {
-            "fraud_flag": fraud_flag,
-            "aml_flag": aml_flag,
-            "risk_score": risk_score,
+            "fraud_flag": fraud,
+            "aml_flag": aml,
+            "risk_score": risk,
             "decision": decision,
             "shap_score": shap_score
         }
@@ -95,30 +109,32 @@ def build_graph():
     return SimpleGraph()
 
 
-# ---------------- STREAMLIT UI ----------------
-st.set_page_config(page_title="Financial Crime SOC", layout="wide")
-
-st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
-
 app = build_graph()
 
-df_placeholder = generate_data(50)
 
-col1, col2, col3 = st.columns(3)
+# =========================
+# UI PLACEHOLDERS
+# =========================
+stream_box = st.empty()
+summary_box = st.empty()
+
+
+# =========================
+# DATA
+# =========================
+df = generate_data(50)
 
 blocked = 0
 review = 0
 approve = 0
 
-stream_box = st.empty()
-log_box = st.empty()
-
-# ---------------- LIVE STREAM ----------------
 results = []
 
-for idx, row in df_placeholder.iterrows():
 
-    st.session_state.run_id += 1
+# =========================
+# LIVE STREAM LOOP
+# =========================
+for i, row in df.iterrows():
 
     output = app.invoke({"transaction": row.to_dict()})
 
@@ -135,35 +151,44 @@ for idx, row in df_placeholder.iterrows():
     else:
         approve += 1
 
-    # ---------------- LIVE UI UPDATE ----------------
+
+    # =========================
+    # LIVE DASHBOARD UPDATE
+    # =========================
     with stream_box.container():
 
-        st.subheader("📡 Live Agentic Stream")
+        st.subheader("📡 Live Transaction Stream")
 
-        st.write(f"TOTAL: {len(results)}")
-        st.write(f"BLOCKED: {blocked}")
-        st.write(f"REVIEW: {review}")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("BLOCKED", blocked)
+        col2.metric("REVIEW", review)
+        col3.metric("APPROVED", approve)
 
         st.divider()
 
-        for r in results[-15:]:  # last 15 only (prevents UI lag)
+        # show last 15 transactions only
+        for r in results[-15:]:
 
-            color = "🚨" if r["decision"] == "BLOCK" else ("⚠️" if r["decision"] == "REVIEW" else "🟢")
+            tag = "🚨" if r["decision"] == "BLOCK" else ("⚠️" if r["decision"] == "REVIEW" else "🟢")
 
             st.write(
-                f"{color} {r['transaction_id']} | "
-                f"{r['decision']} | Risk={r['risk_score']}"
+                f"{tag} {r['transaction_id']} | "
+                f"{r['decision']} | Risk={r['risk_score']:.2f}"
             )
 
-    # ---------------- SAFE SLEEP FOR LIVE EFFECT ----------------
-    time.sleep(0.2)
+    time.sleep(0.15)
 
-# ---------------- FINAL SUMMARY ----------------
-st.success("Live Agentic Stream Completed")
 
-st.write({
-    "TOTAL": len(results),
-    "BLOCKED": blocked,
-    "REVIEW": review,
-    "APPROVE": approve
-})
+# =========================
+# FINAL SUMMARY
+# =========================
+with summary_box.container():
+    st.success("Live Agentic Stream Completed")
+
+    st.write({
+        "TOTAL": len(results),
+        "BLOCKED": blocked,
+        "REVIEW": review,
+        "APPROVED": approve,
+        "SHAP_ENABLED": SHAP_AVAILABLE
+    })
