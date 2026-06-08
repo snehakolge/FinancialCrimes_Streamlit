@@ -1,155 +1,169 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import random
 import time
-import shap
-from sklearn.ensemble import RandomForestClassifier
 
-# -----------------------------
-# CONFIG
-# -----------------------------
-st.set_page_config(page_title="Financial Crime SOC", layout="wide")
-st.title("Real-Time Financial Crime SOC (Agentic + HITL + SHAP)")
+# ---------------- SAFE SHAP IMPORT ----------------
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except:
+    SHAP_AVAILABLE = False
 
-# -----------------------------
-# SESSION STATE
-# -----------------------------
-if "override_log" not in st.session_state:
-    st.session_state.override_log = {}
 
-# -----------------------------
-# DATA GENERATION
-# -----------------------------
+# ---------------- SESSION STATE ----------------
+if "run_id" not in st.session_state:
+    st.session_state.run_id = 0
+
+if "actions" not in st.session_state:
+    st.session_state.actions = {}
+
+if "stream_running" not in st.session_state:
+    st.session_state.stream_running = True
+
+
+# ---------------- DATA GENERATION ----------------
 def generate_data(n=50):
-    np.random.seed(42)
-    return pd.DataFrame({
-        "amount": np.random.randint(100, 20000, n),
-        "velocity": np.random.randint(1, 60, n),
-        "failed_txn": np.random.randint(0, 2, n),
-    })
+    data = []
+    for i in range(n):
+        amount = np.random.randint(100, 20000)
+        velocity = np.random.randint(1, 50)
+        deviation = np.random.random()
 
-df = generate_data(50)
+        risk = (
+            (amount / 20000) * 0.4 +
+            (velocity / 50) * 0.4 +
+            deviation * 0.2
+        )
 
-# -----------------------------
-# ML MODEL (REALISTIC)
-# -----------------------------
-X = df.copy()
-y = ((X["amount"] > 12000) | (X["velocity"] > 40)).astype(int)
+        data.append({
+            "transaction_id": f"T{i}",
+            "amount": amount,
+            "velocity": velocity,
+            "deviation": round(deviation, 2),
+            "risk_score": round(risk, 2)
+        })
 
-model = RandomForestClassifier(n_estimators=80, random_state=42)
-model.fit(X, y)
+    return pd.DataFrame(data)
 
-# SHAP EXPLAINER
-explainer = shap.TreeExplainer(model)
 
-# -----------------------------
-# AGENTS
-# -----------------------------
-def fraud_agent(txn):
-    return txn["amount"] / 20000 + txn["velocity"] / 60
+# ---------------- AGENT LOGIC ----------------
+def fraud_agent(row):
+    return row["risk_score"] > 0.7
 
-def aml_agent(txn):
-    return txn["velocity"] / 60
 
-def rbi_agent(txn):
-    flags = []
-    if txn["amount"] > 15000:
-        flags.append("HIGH_VALUE")
-    if txn["velocity"] > 45:
-        flags.append("VELOCITY_SPIKE")
-    return flags
+def aml_agent(row):
+    return row["velocity"] > 35
 
-def fusion(fraud, aml, rbi_flags):
-    return min(1.0, fraud * 0.5 + aml * 0.3 + len(rbi_flags) * 0.2)
 
-def decision(score):
-    if score > 0.7:
+def fusion_agent(row):
+    risk = row["risk_score"]
+    if risk > 0.75:
         return "BLOCK"
-    elif score > 0.4:
+    elif risk > 0.4:
         return "REVIEW"
-    return "APPROVE"
+    else:
+        return "APPROVE"
 
-# -----------------------------
-# SIMPLE EXPLANATION (SHAP SAFE)
-# -----------------------------
-def explain(row):
-    return {
-        "amount_impact": float(row["amount"] / 20000),
-        "velocity_impact": float(row["velocity"] / 60),
-        "failed_txn_impact": float(row["failed_txn"])
-    }
 
-# -----------------------------
-# UI
-# -----------------------------
+# ---------------- SIMPLE GRAPH (NO LANGGRAPH BUGS) ----------------
+class SimpleGraph:
+    def invoke(self, state):
+        row = state["transaction"]
+
+        fraud_flag = fraud_agent(row)
+        aml_flag = aml_agent(row)
+
+        risk_score = row["risk_score"]
+
+        decision = fusion_agent(row)
+
+        # safe SHAP placeholder
+        shap_score = risk_score * 100
+
+        return {
+            "fraud_flag": fraud_flag,
+            "aml_flag": aml_flag,
+            "risk_score": risk_score,
+            "decision": decision,
+            "shap_score": shap_score
+        }
+
+
+def build_graph():
+    return SimpleGraph()
+
+
+# ---------------- STREAMLIT UI ----------------
+st.set_page_config(page_title="Financial Crime SOC", layout="wide")
+
+st.title("🏦 Real-Time Financial Crime SOC (Agentic + HITL)")
+
+app = build_graph()
+
+df_placeholder = generate_data(50)
+
 col1, col2, col3 = st.columns(3)
-t_box = col1.empty()
-b_box = col2.empty()
-r_box = col3.empty()
 
-feed = st.empty()
-explain_box = st.empty()
+blocked = 0
+review = 0
+approve = 0
 
-# -----------------------------
-# STREAM LOOP
-# -----------------------------
+stream_box = st.empty()
+log_box = st.empty()
+
+# ---------------- LIVE STREAM ----------------
 results = []
 
-for i, row in df.iterrows():
+for idx, row in df_placeholder.iterrows():
 
-    txn = pd.DataFrame([row])
+    st.session_state.run_id += 1
 
-    # ML prediction
-    prob = model.predict_proba(txn)[0][1]
+    output = app.invoke({"transaction": row.to_dict()})
 
-    # Agents
-    fraud = fraud_agent(row)
-    aml = aml_agent(row)
-    rbi_flags = rbi_agent(row)
-    score = fusion(fraud, aml, rbi_flags)
-    dec = decision(score)
+    row["decision"] = output["decision"]
+    row["risk_score"] = output["risk_score"]
 
-    # Explanation (SHAP replacement)
-    explanation = explain(row)
+    results.append(row)
 
-    results.append({
-        "txn": f"T{i}",
-        "decision": dec,
-        "score": score,
-        "prob": prob
-    })
+    # counters
+    if row["decision"] == "BLOCK":
+        blocked += 1
+    elif row["decision"] == "REVIEW":
+        review += 1
+    else:
+        approve += 1
 
-    temp = pd.DataFrame(results)
+    # ---------------- LIVE UI UPDATE ----------------
+    with stream_box.container():
 
-    # stats
-    total = len(temp)
-    blocked = len(temp[temp["decision"] == "BLOCK"])
-    review = len(temp[temp["decision"] == "REVIEW"])
+        st.subheader("📡 Live Agentic Stream")
 
-    t_box.metric("TOTAL", total)
-    b_box.metric("BLOCKED", blocked)
-    r_box.metric("REVIEW", review)
+        st.write(f"TOTAL: {len(results)}")
+        st.write(f"BLOCKED: {blocked}")
+        st.write(f"REVIEW: {review}")
 
-    # LIVE FEED
-    feed.markdown("## 📡 Live SOC Stream")
+        st.divider()
 
-    for r in results[-10:]:
-        icon = "🔴" if r["decision"] == "BLOCK" else "🟡" if r["decision"] == "REVIEW" else "🟢"
-        feed.write(f"{icon} {r['txn']} | {r['decision']} | Risk={r['score']:.2f} | ML={r['prob']:.2f}")
+        for r in results[-15:]:  # last 15 only (prevents UI lag)
 
-    # EXPLANATION PANEL
-    explain_box.markdown("## 🧠 Transaction Explainability")
+            color = "🚨" if r["decision"] == "BLOCK" else ("⚠️" if r["decision"] == "REVIEW" else "🟢")
 
-    for k, v in explanation.items():
-        if v > 0.6:
-            st.error(f"{k}: HIGH IMPACT ({v:.2f})")
-        elif v > 0.3:
-            st.warning(f"{k}: MEDIUM IMPACT ({v:.2f})")
-        else:
-            st.success(f"{k}: LOW IMPACT ({v:.2f})")
+            st.write(
+                f"{color} {r['transaction_id']} | "
+                f"{r['decision']} | Risk={r['risk_score']}"
+            )
 
-    st.toast(f"{dec} | Risk={score:.2f}")
-
+    # ---------------- SAFE SLEEP FOR LIVE EFFECT ----------------
     time.sleep(0.2)
 
-st.success("SOC Stream Completed")
+# ---------------- FINAL SUMMARY ----------------
+st.success("Live Agentic Stream Completed")
+
+st.write({
+    "TOTAL": len(results),
+    "BLOCKED": blocked,
+    "REVIEW": review,
+    "APPROVE": approve
+})
