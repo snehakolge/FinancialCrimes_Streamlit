@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import random
 import time
+import numpy as np
 
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
@@ -43,6 +44,25 @@ if "customer_risk" not in st.session_state:
 
 if "actions" not in st.session_state:
     st.session_state.actions = {}
+
+# MODEL METRICS
+if "model_metrics" not in st.session_state:
+
+    st.session_state.model_metrics = {
+        "precision": 95,
+        "recall": 96,
+        "f1": 95
+    }
+
+# DRIFT SCORE
+if "drift_score" not in st.session_state:
+
+    st.session_state.drift_score = 0.12
+
+# RETRAINING LOG
+if "retraining_log" not in st.session_state:
+
+    st.session_state.retraining_log = []
 
 # =========================================================
 # METRICS PLACEHOLDER
@@ -201,12 +221,14 @@ workflow.add_edge("decision", END)
 app = workflow.compile()
 
 # =========================================================
-# LIVE METRICS
+# COMMAND CENTER METRICS
 # =========================================================
 
 with metric_placeholder.container():
 
-    c1, c2, c3, c4 = st.columns(4)
+    st.markdown("## 🛡️ Autonomous Fraud Command Center")
+
+    c1, c2, c3, c4, c5 = st.columns(5)
 
     c1.metric(
         "TOTAL",
@@ -226,6 +248,11 @@ with metric_placeholder.container():
     c4.metric(
         "FREEZE",
         st.session_state.stats["FREEZE"]
+    )
+
+    c5.metric(
+        "DRIFT SCORE",
+        round(st.session_state.drift_score,2)
     )
 
 # =========================================================
@@ -252,11 +279,49 @@ if st.session_state.running:
 
     txn = generate_transaction()
 
+    # =====================================================
+    # DRIFT SIMULATION
+    # =====================================================
+
+    st.session_state.drift_score += round(
+        random.uniform(0.01,0.05),
+        2
+    )
+
+    st.session_state.drift_score = min(
+        st.session_state.drift_score,
+        1.0
+    )
+
+    # MODEL PERFORMANCE DEGRADATION
+
+    st.session_state.model_metrics["recall"] -= random.choice([0,1])
+
+    st.session_state.model_metrics["precision"] -= random.choice([0,1])
+
+    st.session_state.model_metrics["f1"] -= random.choice([0,1])
+
+    # SAFE LIMITS
+
+    st.session_state.model_metrics["recall"] = max(
+        st.session_state.model_metrics["recall"],
+        70
+    )
+
+    st.session_state.model_metrics["precision"] = max(
+        st.session_state.model_metrics["precision"],
+        70
+    )
+
+    st.session_state.model_metrics["f1"] = max(
+        st.session_state.model_metrics["f1"],
+        70
+    )
+
     result = app.invoke(txn)
 
     decision = result["decision"]
 
-    # SAFE UPDATE
     if decision not in st.session_state.stats:
         st.session_state.stats[decision] = 0
 
@@ -265,13 +330,16 @@ if st.session_state.running:
     # STORE ALERTS
     st.session_state.alerts.insert(0, result)
 
-    # KEEP ONLY LAST 15 ALERTS
+    # KEEP LAST 15
     st.session_state.alerts = st.session_state.alerts[:15]
 
     # UPDATE METRICS
+
     with metric_placeholder.container():
 
-        c1, c2, c3, c4 = st.columns(4)
+        st.markdown("## 🛡️ Autonomous Fraud Command Center")
+
+        c1, c2, c3, c4, c5 = st.columns(5)
 
         c1.metric(
             "TOTAL",
@@ -293,10 +361,18 @@ if st.session_state.running:
             st.session_state.stats["FREEZE"]
         )
 
-    # DISPLAY FEED
+        c5.metric(
+            "DRIFT SCORE",
+            round(st.session_state.drift_score,2)
+        )
+
+    # =====================================================
+    # LIVE FEED DISPLAY
+    # =====================================================
+
     with feed_placeholder.container():
 
-        st.subheader("🚨 Live Feed")
+        st.subheader("🚨 Live AI Alert Feed")
 
         latest_alerts = st.session_state.alerts[:10]
 
@@ -321,7 +397,6 @@ Customer: {r['customer_id']}
                 """
             )
 
-            # UNIQUE KEY
             action_key = f"{r['txn_id']}_{idx}_{r['decision']}"
 
             if r["decision"] in ["BLOCK", "REVIEW", "FREEZE"]:
@@ -332,10 +407,8 @@ Customer: {r['customer_id']}
                 ):
                     st.session_state.actions[r["txn_id"]] = "Investigated"
 
-    # STREAM SPEED
     time.sleep(1)
 
-    # AUTO REFRESH
     st.rerun()
 
 # =========================================================
@@ -345,6 +418,38 @@ Customer: {r['customer_id']}
 st.subheader("📌 Investigator Actions")
 
 st.write(st.session_state.actions)
+
+# =========================================================
+# MULTI-AGENT INVESTIGATION
+# =========================================================
+
+st.subheader("🧠 AI Investigation Narrative")
+
+if len(st.session_state.alerts) > 0:
+
+    latest_case = st.session_state.alerts[0]
+
+    st.info(f"""
+
+Fraud Agent:
+Detected suspicious transaction velocity and abnormal amount spike.
+
+Behavior Agent:
+Detected behavioral anomaly pattern.
+
+Memory Agent:
+Customer risk history evaluated.
+
+Decision Agent:
+Recommended {latest_case['decision']} action.
+
+Risk Score:
+{round(latest_case['risk_score'],2)}
+
+Reasons:
+{' | '.join(latest_case['reasons'])}
+
+    """)
 
 # =========================================================
 # HIGH RISK CUSTOMERS
@@ -385,3 +490,91 @@ chart_df = pd.DataFrame({
 st.bar_chart(
     chart_df.set_index("Decision")
 )
+
+# =========================================================
+# CONTINUOUS MODEL EVALUATION
+# =========================================================
+
+st.subheader("📈 Continuous AI Model Evaluation")
+
+metric_df = pd.DataFrame({
+    "Metric": ["Precision", "Recall", "F1"],
+    "Score": [
+        st.session_state.model_metrics["precision"],
+        st.session_state.model_metrics["recall"],
+        st.session_state.model_metrics["f1"]
+    ]
+})
+
+st.dataframe(metric_df)
+
+trend_df = pd.DataFrame({
+    "Cycle": ["C1","C2","C3","C4","C5"],
+    "Recall": [96,94,92,89,st.session_state.model_metrics["recall"]],
+    "Precision": [95,94,93,91,st.session_state.model_metrics["precision"]]
+})
+
+st.line_chart(
+    trend_df.set_index("Cycle")
+)
+
+# DRIFT ALERTS
+
+if st.session_state.model_metrics["recall"] < 85:
+
+    st.error("🚨 AI ALERT: Fraud Recall Dropped")
+
+if st.session_state.drift_score > 0.40:
+
+    st.warning("⚠️ Drift Detection Agent Triggered")
+
+# =========================================================
+# SELF-HEALING AI AGENT
+# =========================================================
+
+st.subheader("🤖 Self-Healing AI Agent")
+
+if st.session_state.drift_score > 0.40:
+
+    st.warning("⚠️ Autonomous Retraining Pipeline Activated")
+
+    if st.button("Run AI Retraining"):
+
+        with st.spinner("Training New Fraud Model..."):
+
+            time.sleep(3)
+
+            old_recall = st.session_state.model_metrics["recall"]
+
+            new_recall = random.randint(90,97)
+
+            st.session_state.model_metrics["recall"] = new_recall
+
+            st.session_state.model_metrics["precision"] = random.randint(90,97)
+
+            st.session_state.model_metrics["f1"] = random.randint(90,97)
+
+            st.session_state.drift_score = round(
+                random.uniform(0.05,0.25),
+                2
+            )
+
+            retrain_result = {
+                "Old Recall": old_recall,
+                "New Recall": new_recall,
+                "Status": "DEPLOYED"
+            }
+
+            st.session_state.retraining_log.append(
+                retrain_result
+            )
+
+            st.success("✅ Governance Agent Approved New Model")
+
+if len(st.session_state.retraining_log) > 0:
+
+    st.subheader("📜 Retraining Audit Log")
+
+    st.dataframe(
+        pd.DataFrame(st.session_state.retraining_log)
+    )
