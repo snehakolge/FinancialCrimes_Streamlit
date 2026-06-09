@@ -45,7 +45,6 @@ if "customer_risk" not in st.session_state:
 if "actions" not in st.session_state:
     st.session_state.actions = {}
 
-# MODEL METRICS
 if "model_metrics" not in st.session_state:
 
     st.session_state.model_metrics = {
@@ -54,21 +53,20 @@ if "model_metrics" not in st.session_state:
         "f1": 95
     }
 
-# DRIFT SCORE
 if "drift_score" not in st.session_state:
 
     st.session_state.drift_score = 0.12
 
-# RETRAINING LOG
 if "retraining_log" not in st.session_state:
 
     st.session_state.retraining_log = []
 
 # =========================================================
-# METRICS PLACEHOLDER
+# PLACEHOLDERS
 # =========================================================
 
 metric_placeholder = st.empty()
+feed_placeholder = st.empty()
 
 # =========================================================
 # TRANSACTION GENERATOR
@@ -101,6 +99,7 @@ def generate_transaction():
 # =========================================================
 
 class FraudState(TypedDict):
+
     txn_id: str
     customer_id: str
     amount: int
@@ -119,6 +118,7 @@ class FraudState(TypedDict):
 def amount_agent(state):
 
     if state.get("amount",0) > 12000:
+
         state["risk_score"] += 0.4
         state["reasons"].append("High Amount Spike")
 
@@ -128,6 +128,7 @@ def amount_agent(state):
 def velocity_agent(state):
 
     if state.get("velocity",0) > 8:
+
         state["risk_score"] += 0.3
         state["reasons"].append("Velocity Breach")
 
@@ -137,6 +138,7 @@ def velocity_agent(state):
 def device_agent(state):
 
     if state.get("device_change",0) == 1:
+
         state["risk_score"] += 0.2
         state["reasons"].append("Device Change Detected")
 
@@ -146,6 +148,7 @@ def device_agent(state):
 def geo_agent(state):
 
     if state.get("geo_risk",0) == 1:
+
         state["risk_score"] += 0.2
         state["reasons"].append("High Risk Geography")
 
@@ -155,6 +158,7 @@ def geo_agent(state):
 def behavior_agent(state):
 
     if state.get("behavioral_anomaly",0) == 1:
+
         state["risk_score"] += 0.2
         state["reasons"].append("Behavioral Anomaly")
 
@@ -168,6 +172,7 @@ def memory_agent(state):
     old_risk = st.session_state.customer_risk.get(customer, 0)
 
     if old_risk > 2:
+
         state["risk_score"] += 0.2
         state["reasons"].append("Repeat Risk Customer")
 
@@ -181,15 +186,19 @@ def decision_agent(state):
     risk = state["risk_score"]
 
     if risk >= 1.2:
+
         state["decision"] = "FREEZE"
 
     elif risk >= 0.8:
+
         state["decision"] = "BLOCK"
 
     elif risk >= 0.5:
+
         state["decision"] = "REVIEW"
 
     else:
+
         state["decision"] = "APPROVE"
 
     return state
@@ -259,21 +268,25 @@ with metric_placeholder.container():
 # CONTROL BUTTONS
 # =========================================================
 
+st.divider()
+
 col1, col2 = st.columns(2)
 
 with col1:
+
     if st.button("▶ Start Live Stream"):
+
         st.session_state.running = True
 
 with col2:
+
     if st.button("⏹ Stop Stream"):
+
         st.session_state.running = False
 
 # =========================================================
 # LIVE FEED
 # =========================================================
-
-feed_placeholder = st.empty()
 
 if st.session_state.running:
 
@@ -318,22 +331,29 @@ if st.session_state.running:
         70
     )
 
+    # =====================================================
+    # RUN AGENTIC WORKFLOW
+    # =====================================================
+
     result = app.invoke(txn)
 
     decision = result["decision"]
 
     if decision not in st.session_state.stats:
+
         st.session_state.stats[decision] = 0
 
     st.session_state.stats[decision] += 1
 
     # STORE ALERTS
+
     st.session_state.alerts.insert(0, result)
 
-    # KEEP LAST 15
     st.session_state.alerts = st.session_state.alerts[:15]
 
+    # =====================================================
     # UPDATE METRICS
+    # =====================================================
 
     with metric_placeholder.container():
 
@@ -367,7 +387,7 @@ if st.session_state.running:
         )
 
     # =====================================================
-    # LIVE FEED DISPLAY
+    # LIVE ALERT FEED
     # =====================================================
 
     with feed_placeholder.container():
@@ -405,9 +425,14 @@ Customer: {r['customer_id']}
                     f"Investigate {r['txn_id']}",
                     key=action_key
                 ):
+
                     st.session_state.actions[r["txn_id"]] = "Investigated"
 
-    time.sleep(1)
+    # STREAM SPEED
+
+    time.sleep(2)
+
+    # AUTO REFRESH
 
     st.rerun()
 
@@ -415,13 +440,31 @@ Customer: {r['customer_id']}
 # INVESTIGATOR ACTIONS
 # =========================================================
 
+st.divider()
+
 st.subheader("📌 Investigator Actions")
 
-st.write(st.session_state.actions)
+if len(st.session_state.actions) > 0:
+
+    actions_df = pd.DataFrame(
+        list(st.session_state.actions.items()),
+        columns=["Transaction", "Status"]
+    )
+
+    st.dataframe(
+        actions_df,
+        use_container_width=True
+    )
+
+else:
+
+    st.info("No investigations initiated yet.")
 
 # =========================================================
 # MULTI-AGENT INVESTIGATION
 # =========================================================
+
+st.divider()
 
 st.subheader("🧠 AI Investigation Narrative")
 
@@ -429,31 +472,37 @@ if len(st.session_state.alerts) > 0:
 
     latest_case = st.session_state.alerts[0]
 
-    st.info(f"""
+    narrative = f"""
+🚨 Fraud Agent:
+Detected suspicious transaction behavior.
 
-Fraud Agent:
-Detected suspicious transaction velocity and abnormal amount spike.
+🧠 Behavioral Agent:
+Detected anomaly pattern.
 
-Behavior Agent:
-Detected behavioral anomaly pattern.
+👤 Memory Agent:
+Customer historical risk evaluated.
 
-Memory Agent:
-Customer risk history evaluated.
-
-Decision Agent:
+⚖️ Decision Agent:
 Recommended {latest_case['decision']} action.
 
-Risk Score:
+📊 Risk Score:
 {round(latest_case['risk_score'],2)}
 
-Reasons:
+📌 Reasons:
 {' | '.join(latest_case['reasons'])}
+"""
 
-    """)
+    st.text(narrative)
+
+else:
+
+    st.info("No investigation narratives available.")
 
 # =========================================================
 # HIGH RISK CUSTOMERS
 # =========================================================
+
+st.divider()
 
 st.subheader("📊 High Risk Customers")
 
@@ -469,11 +518,20 @@ if not risk_df.empty:
         ascending=False
     )
 
-    st.dataframe(risk_df.head(10))
+    st.dataframe(
+        risk_df.head(10),
+        use_container_width=True
+    )
+
+else:
+
+    st.info("No customer risk data yet.")
 
 # =========================================================
 # DECISION ANALYTICS
 # =========================================================
+
+st.divider()
 
 st.subheader("📈 Decision Analytics")
 
@@ -488,12 +546,16 @@ chart_df = pd.DataFrame({
 })
 
 st.bar_chart(
-    chart_df.set_index("Decision")
+    data=chart_df,
+    x="Decision",
+    y="Count"
 )
 
 # =========================================================
 # CONTINUOUS MODEL EVALUATION
 # =========================================================
+
+st.divider()
 
 st.subheader("📈 Continuous AI Model Evaluation")
 
@@ -506,19 +568,28 @@ metric_df = pd.DataFrame({
     ]
 })
 
-st.dataframe(metric_df)
+st.dataframe(
+    metric_df,
+    use_container_width=True
+)
 
 trend_df = pd.DataFrame({
     "Cycle": ["C1","C2","C3","C4","C5"],
-    "Recall": [96,94,92,89,st.session_state.model_metrics["recall"]],
-    "Precision": [95,94,93,91,st.session_state.model_metrics["precision"]]
+    "Recall": [96,94,92,89,
+               st.session_state.model_metrics["recall"]],
+    "Precision": [95,94,93,91,
+                  st.session_state.model_metrics["precision"]]
 })
 
 st.line_chart(
-    trend_df.set_index("Cycle")
+    data=trend_df,
+    x="Cycle",
+    y=["Recall", "Precision"]
 )
 
+# =========================================================
 # DRIFT ALERTS
+# =========================================================
 
 if st.session_state.model_metrics["recall"] < 85:
 
@@ -531,6 +602,8 @@ if st.session_state.drift_score > 0.40:
 # =========================================================
 # SELF-HEALING AI AGENT
 # =========================================================
+
+st.divider()
 
 st.subheader("🤖 Self-Healing AI Agent")
 
@@ -569,12 +642,23 @@ if st.session_state.drift_score > 0.40:
                 retrain_result
             )
 
-            st.success("✅ Governance Agent Approved New Model")
+            st.success(
+                "✅ Governance Agent Approved New Model"
+            )
+
+# =========================================================
+# RETRAINING AUDIT LOG
+# =========================================================
 
 if len(st.session_state.retraining_log) > 0:
 
     st.subheader("📜 Retraining Audit Log")
 
     st.dataframe(
-        pd.DataFrame(st.session_state.retraining_log)
+        pd.DataFrame(st.session_state.retraining_log),
+        use_container_width=True
     )
+
+else:
+
+    st.info("No retraining events yet.")
