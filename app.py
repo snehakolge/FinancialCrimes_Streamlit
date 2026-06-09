@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import random
 import time
-import numpy as np
 
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
@@ -16,7 +15,9 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🏦 Real-Time Financial Crime SOC (Agentic + LangGraph + HITL)")
+st.title(
+    "🏦 Real-Time Financial Crime SOC (Agentic + LangGraph + HITL)"
+)
 
 # =========================================================
 # SESSION STATE
@@ -72,6 +73,7 @@ if "retraining_log" not in st.session_state:
 # =========================================================
 
 metric_placeholder = st.empty()
+
 feed_placeholder = st.empty()
 
 # =========================================================
@@ -87,15 +89,25 @@ def generate_transaction():
     customer_id = f"C{random.randint(100,120)}"
 
     txn = {
+
         "txn_id": txn_id,
+
         "customer_id": customer_id,
+
         "amount": random.randint(100, 20000),
+
         "velocity": random.randint(1, 15),
+
         "device_change": random.choice([0,1]),
+
         "geo_risk": random.choice([0,1]),
+
         "behavioral_anomaly": random.choice([0,1]),
+
         "risk_score": 0.0,
+
         "reasons": [],
+
         "decision": "APPROVE"
     }
 
@@ -108,14 +120,23 @@ def generate_transaction():
 class FraudState(TypedDict):
 
     txn_id: str
+
     customer_id: str
+
     amount: int
+
     velocity: int
+
     device_change: int
+
     geo_risk: int
+
     behavioral_anomaly: int
+
     risk_score: float
+
     reasons: list
+
     decision: str
 
 # =========================================================
@@ -206,7 +227,9 @@ def memory_agent(state):
             "Repeat Risk Customer"
         )
 
-    st.session_state.customer_risk[customer] = old_risk + 1
+    st.session_state.customer_risk[
+        customer
+    ] = old_risk + 1
 
     return state
 
@@ -446,21 +469,27 @@ if st.session_state.running:
         )
 
     # =====================================================
-    # LIVE FEED
+    # LIVE ALERT FEED
     # =====================================================
 
     with feed_placeholder.container():
 
-        st.subheader("🚨 Live AI Alert Feed")
+        st.subheader(
+            "🚨 Live AI Alert Feed"
+        )
 
         latest_alerts = st.session_state.alerts[:10]
 
         for idx, r in enumerate(latest_alerts):
 
             emoji = {
+
                 "APPROVE": "🟢",
+
                 "REVIEW": "⚠️",
+
                 "BLOCK": "🚨",
+
                 "FREEZE": "🧊"
             }
 
@@ -493,14 +522,6 @@ Customer: {r['customer_id']}
                         r["txn_id"]
                     ] = "Investigated"
 
-    # =====================================================
-    # STREAM SPEED
-    # =====================================================
-
-    time.sleep(2)
-
-    st.rerun()
-
 # =========================================================
 # INVESTIGATOR ACTIONS
 # =========================================================
@@ -512,7 +533,9 @@ st.subheader("📌 Investigator Actions")
 if len(st.session_state.actions) > 0:
 
     actions_df = pd.DataFrame(
-        list(st.session_state.actions.items()),
+        list(
+            st.session_state.actions.items()
+        ),
         columns=[
             "Transaction",
             "Status"
@@ -536,23 +559,26 @@ else:
 
 st.divider()
 
-st.subheader("🧠 AI Investigation Narrative")
+st.subheader(
+    "🧠 AI Investigation Narrative"
+)
 
-if len(st.session_state.alerts) >= 1:
+risk_alerts = [
 
-    latest_case = next(
-        (
-            a for a in st.session_state.alerts
-            if a["decision"] in [
-                "BLOCK",
-                "REVIEW",
-                "FREEZE"
-            ]
-        ),
-        st.session_state.alerts[0]
-    )
+    a for a in st.session_state.alerts
 
-    narrative = f"""
+    if a["decision"] in [
+        "BLOCK",
+        "REVIEW",
+        "FREEZE"
+    ]
+]
+
+if len(risk_alerts) > 0:
+
+    latest_case = risk_alerts[0]
+
+    st.text(f"""
 🚨 Fraud Agent:
 Detected suspicious transaction behavior.
 
@@ -570,14 +596,12 @@ Recommended {latest_case['decision']} action.
 
 📌 Reasons:
 {' | '.join(latest_case['reasons'])}
-"""
-
-    st.text(narrative)
+""")
 
 else:
 
     st.info(
-        "No investigation narratives available."
+        "Waiting for risky transactions..."
     )
 
 # =========================================================
@@ -588,17 +612,18 @@ st.divider()
 
 st.subheader("📊 High Risk Customers")
 
-risk_df = pd.DataFrame(
-    list(
-        st.session_state.customer_risk.items()
-    ),
-    columns=[
-        "Customer",
-        "Risk Count"
-    ]
-)
+if len(st.session_state.customer_risk) > 0:
 
-if not risk_df.empty:
+    risk_df = pd.DataFrame({
+
+        "Customer": list(
+            st.session_state.customer_risk.keys()
+        ),
+
+        "Risk Count": list(
+            st.session_state.customer_risk.values()
+        )
+    })
 
     risk_df = risk_df.sort_values(
         by="Risk Count",
@@ -613,7 +638,7 @@ if not risk_df.empty:
 else:
 
     st.info(
-        "No customer risk data yet."
+        "Waiting for repeat-risk customers..."
     )
 
 # =========================================================
@@ -807,3 +832,13 @@ else:
     st.info(
         "No retraining events yet."
     )
+
+# =========================================================
+# FINAL AUTO REFRESH
+# =========================================================
+
+if st.session_state.running:
+
+    time.sleep(2)
+
+    st.rerun()
